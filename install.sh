@@ -560,6 +560,8 @@ main() {
     print_info "Run '$BIN_NAME' in any beads project to view issues."
 }
 
-if [[ -z "${BASH_SOURCE+x}" || "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ ${BASH_SOURCE+x} != x ]]; then
+    main "$@"
+elif [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     main "$@"
 fi
