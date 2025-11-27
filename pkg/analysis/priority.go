@@ -10,21 +10,21 @@ import (
 
 // ImpactScore represents the composite priority score for an issue
 type ImpactScore struct {
-	IssueID   string             `json:"issue_id"`
-	Title     string             `json:"title"`
-	Score     float64            `json:"score"`      // Composite 0-1 score
-	Breakdown ScoreBreakdown     `json:"breakdown"`  // Individual components
-	Priority  int                `json:"priority"`   // Original priority
-	Status    string             `json:"status"`
+	IssueID   string         `json:"issue_id"`
+	Title     string         `json:"title"`
+	Score     float64        `json:"score"`     // Composite 0-1 score
+	Breakdown ScoreBreakdown `json:"breakdown"` // Individual components
+	Priority  int            `json:"priority"`  // Original priority
+	Status    string         `json:"status"`
 }
 
 // ScoreBreakdown shows the weighted contribution of each component
 type ScoreBreakdown struct {
-	PageRank      float64 `json:"pagerank"`        // 0.30 weight
-	Betweenness   float64 `json:"betweenness"`     // 0.30 weight
-	BlockerRatio  float64 `json:"blocker_ratio"`   // 0.20 weight
-	Staleness     float64 `json:"staleness"`       // 0.10 weight
-	PriorityBoost float64 `json:"priority_boost"`  // 0.10 weight
+	PageRank      float64 `json:"pagerank"`       // 0.30 weight
+	Betweenness   float64 `json:"betweenness"`    // 0.30 weight
+	BlockerRatio  float64 `json:"blocker_ratio"`  // 0.20 weight
+	Staleness     float64 `json:"staleness"`      // 0.10 weight
+	PriorityBoost float64 `json:"priority_boost"` // 0.10 weight
 
 	// Raw normalized values (before weighting)
 	PageRankNorm      float64 `json:"pagerank_norm"`
@@ -220,18 +220,18 @@ type PriorityRecommendation struct {
 	CurrentPriority   int      `json:"current_priority"`
 	SuggestedPriority int      `json:"suggested_priority"`
 	ImpactScore       float64  `json:"impact_score"`
-	Confidence        float64  `json:"confidence"`  // 0-1, higher when evidence is strong
-	Reasoning         []string `json:"reasoning"`   // Human-readable explanations
-	Direction         string   `json:"direction"`   // "increase" or "decrease"
+	Confidence        float64  `json:"confidence"` // 0-1, higher when evidence is strong
+	Reasoning         []string `json:"reasoning"`  // Human-readable explanations
+	Direction         string   `json:"direction"`  // "increase" or "decrease"
 }
 
 // RecommendationThresholds configure when to suggest priority changes
 type RecommendationThresholds struct {
-	HighPageRank      float64 // Normalized PageRank above this suggests high priority
-	HighBetweenness   float64 // Normalized Betweenness above this suggests high priority
-	StalenessDays     int     // Days since update to mention staleness
-	MinConfidence     float64 // Minimum confidence to include recommendation
-	SignificantDelta  float64 // Score difference to suggest priority change
+	HighPageRank     float64 // Normalized PageRank above this suggests high priority
+	HighBetweenness  float64 // Normalized Betweenness above this suggests high priority
+	StalenessDays    int     // Days since update to mention staleness
+	MinConfidence    float64 // Minimum confidence to include recommendation
+	SignificantDelta float64 // Score difference to suggest priority change
 }
 
 // DefaultThresholds returns sensible default thresholds

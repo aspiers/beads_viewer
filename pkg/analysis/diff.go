@@ -76,11 +76,11 @@ type SnapshotDiff struct {
 	ToRevision    string    `json:"to_revision,omitempty"`
 
 	// Issue changes
-	NewIssues      []model.Issue    `json:"new_issues"`       // In To but not From
-	ClosedIssues   []model.Issue    `json:"closed_issues"`    // Status changed to closed
-	RemovedIssues  []model.Issue    `json:"removed_issues"`   // In From but not To
-	ReopenedIssues []model.Issue    `json:"reopened_issues"`  // Status changed from closed to open
-	ModifiedIssues []ModifiedIssue  `json:"modified_issues"`  // Changed between snapshots
+	NewIssues      []model.Issue   `json:"new_issues"`      // In To but not From
+	ClosedIssues   []model.Issue   `json:"closed_issues"`   // Status changed to closed
+	RemovedIssues  []model.Issue   `json:"removed_issues"`  // In From but not To
+	ReopenedIssues []model.Issue   `json:"reopened_issues"` // Status changed from closed to open
+	ModifiedIssues []ModifiedIssue `json:"modified_issues"` // Changed between snapshots
 
 	// Graph changes
 	NewCycles      [][]string `json:"new_cycles"`      // Cycles appearing in To
@@ -111,15 +111,15 @@ type FieldChange struct {
 
 // MetricDeltas tracks changes in key metrics
 type MetricDeltas struct {
-	TotalIssues     int     `json:"total_issues"`
-	OpenIssues      int     `json:"open_issues"`
-	ClosedIssues    int     `json:"closed_issues"`
-	BlockedIssues   int     `json:"blocked_issues"`
-	TotalEdges      int     `json:"total_edges"`
-	CycleCount      int     `json:"cycle_count"`
-	ComponentCount  int     `json:"component_count"`
-	AvgPageRank     float64 `json:"avg_pagerank"`
-	AvgBetweenness  float64 `json:"avg_betweenness"`
+	TotalIssues    int     `json:"total_issues"`
+	OpenIssues     int     `json:"open_issues"`
+	ClosedIssues   int     `json:"closed_issues"`
+	BlockedIssues  int     `json:"blocked_issues"`
+	TotalEdges     int     `json:"total_edges"`
+	CycleCount     int     `json:"cycle_count"`
+	ComponentCount int     `json:"component_count"`
+	AvgPageRank    float64 `json:"avg_pagerank"`
+	AvgBetweenness float64 `json:"avg_betweenness"`
 }
 
 // DiffSummary provides quick overview of changes
@@ -485,6 +485,9 @@ func priorityString(p int) string {
 func dependencySet(deps []*model.Dependency) map[string]bool {
 	set := make(map[string]bool)
 	for _, dep := range deps {
+		if dep == nil || dep.DependsOnID == "" {
+			continue
+		}
 		set[dep.DependsOnID] = true
 	}
 	return set

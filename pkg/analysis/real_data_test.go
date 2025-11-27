@@ -16,7 +16,7 @@ import (
 func loadRealIssues(t *testing.T, filename string) []model.Issue {
 	// Tests run from pkg/analysis, so root is ../..
 	path := filepath.Join("..", "..", "tests", "testdata", "real", filename)
-	
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("Failed to read test data %s: %v", filename, err)
@@ -106,7 +106,7 @@ func TestRealData_Srps(t *testing.T) {
 	}
 
 	an := analysis.NewAnalyzer(issues)
-	
+
 	// 1. Check Impact Scores
 	scores := an.ComputeImpactScores()
 	if len(scores) == 0 {
@@ -133,7 +133,7 @@ func TestRealData_ProjectBeads(t *testing.T) {
 	// Try to load the project's own beads file from root .beads/beads.jsonl
 	// This makes the test depend on the repo state, which is good for "eating your own dogfood"
 	// but might be flaky if the repo state is broken. We'll soft-fail or skip if file missing.
-	
+
 	path := filepath.Join("..", "..", ".beads", "beads.jsonl")
 	// Also check issues.jsonl or beads.base.jsonl
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -142,7 +142,7 @@ func TestRealData_ProjectBeads(t *testing.T) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		path = filepath.Join("..", "..", ".beads", "beads.base.jsonl")
 	}
-	
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Skip("Project .beads file not found, skipping self-test")
 	}
@@ -157,7 +157,9 @@ func TestRealData_ProjectBeads(t *testing.T) {
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		if len(line) == 0 { continue }
+		if len(line) == 0 {
+			continue
+		}
 		var issue model.Issue
 		if err := json.Unmarshal(line, &issue); err == nil {
 			issues = append(issues, issue)
@@ -175,139 +177,43 @@ func TestRealData_ProjectBeads(t *testing.T) {
 	t.Logf("Project Self-Analysis: %d issues, %d actionable, %d blocked, %d tracks",
 		len(issues), plan.TotalActionable, plan.TotalBlocked, len(plan.Tracks))
 
-		if plan.Summary.HighestImpact != "" {
+	if plan.Summary.HighestImpact != "" {
 
-			t.Logf("Highest Impact: %s (Unblocks %d)", 
+		t.Logf("Highest Impact: %s (Unblocks %d)",
 
-				plan.Summary.HighestImpact, plan.Summary.UnblocksCount)
-
-		}
+			plan.Summary.HighestImpact, plan.Summary.UnblocksCount)
 
 	}
 
-	
+}
 
-	func TestRealData_Combined(t *testing.T) {
+func TestRealData_Combined(t *testing.T) {
 
-		// Load all available real data
+	// Load all available real data
 
-		cass := loadRealIssues(t, "cass.jsonl")
+	cass := loadRealIssues(t, "cass.jsonl")
 
-		srps := loadRealIssues(t, "srps.jsonl")
+	srps := loadRealIssues(t, "srps.jsonl")
 
-		
+	// Load project beads if available
 
-		// Load project beads if available
+	var project []model.Issue
 
-		var project []model.Issue
+	path := filepath.Join("..", "..", ".beads", "beads.jsonl")
 
-		path := filepath.Join("..", "..", ".beads", "beads.jsonl")
+	if _, err := os.Stat(path); err == nil {
 
-		if _, err := os.Stat(path); err == nil {
+		content, _ := os.ReadFile(path)
 
-			content, _ := os.ReadFile(path)
+		scanner := bufio.NewScanner(bytes.NewReader(content))
 
-			scanner := bufio.NewScanner(bytes.NewReader(content))
+		for scanner.Scan() {
 
-			for scanner.Scan() {
+			var issue model.Issue
 
-				var issue model.Issue
+			if err := json.Unmarshal(scanner.Bytes(), &issue); err == nil {
 
-				if err := json.Unmarshal(scanner.Bytes(), &issue); err == nil {
-
-					project = append(project, issue)
-
-				}
-
-			}
-
-		}
-
-	
-
-		// Combine all
-
-		var combined []model.Issue
-
-		combined = append(combined, cass...)
-
-		combined = append(combined, srps...)
-
-		combined = append(combined, project...)
-
-	
-
-		if len(combined) == 0 {
-
-			t.Fatal("No real data loaded for combined test")
-
-		}
-
-	
-
-		// Analyze aggregate
-
-		an := analysis.NewAnalyzer(combined)
-
-		stats := an.Analyze()
-
-		plan := an.GetExecutionPlan()
-
-	
-
-		t.Logf("Combined Analysis: %d issues total", len(combined))
-
-		t.Logf("- Actionable: %d", plan.TotalActionable)
-
-		t.Logf("- Blocked: %d", plan.TotalBlocked)
-
-		t.Logf("- Tracks: %d", len(plan.Tracks))
-
-		t.Logf("- Cycles: %d", len(stats.Cycles))
-
-	
-
-		if len(stats.Cycles) > 0 {
-
-			for i, cycle := range stats.Cycles {
-
-				t.Logf("  Cycle %d: %v", i+1, cycle)
-
-			}
-
-		}
-
-	
-
-		// Assert robustness
-
-		// The analysis shouldn't panic even with disjoint IDs (from different projects)
-
-		// or potential ID collisions (if any)
-
-		if len(stats.PageRank) != len(combined) {
-
-			// Note: PageRank might be missing for isolated nodes if the algo filters them? 
-
-			// No, PageRank typically covers all nodes.
-
-			// Actually, our Analyzer implementation initializes all nodes.
-
-			// But duplicate IDs (collisions) would merge.
-
-			// Let's check for unique IDs count
-
-			uniqueIDs := make(map[string]bool)
-
-			for _, i := range combined {
-
-				uniqueIDs[i.ID] = true
-
-			}
-
-			if len(stats.PageRank) != len(uniqueIDs) {
-
-				t.Errorf("PageRank count %d != Unique Issue Count %d", len(stats.PageRank), len(uniqueIDs))
+				project = append(project, issue)
 
 			}
 
@@ -315,4 +221,82 @@ func TestRealData_ProjectBeads(t *testing.T) {
 
 	}
 
-	
+	// Combine all
+
+	var combined []model.Issue
+
+	combined = append(combined, cass...)
+
+	combined = append(combined, srps...)
+
+	combined = append(combined, project...)
+
+	if len(combined) == 0 {
+
+		t.Fatal("No real data loaded for combined test")
+
+	}
+
+	// Analyze aggregate
+
+	an := analysis.NewAnalyzer(combined)
+
+	stats := an.Analyze()
+
+	plan := an.GetExecutionPlan()
+
+	t.Logf("Combined Analysis: %d issues total", len(combined))
+
+	t.Logf("- Actionable: %d", plan.TotalActionable)
+
+	t.Logf("- Blocked: %d", plan.TotalBlocked)
+
+	t.Logf("- Tracks: %d", len(plan.Tracks))
+
+	t.Logf("- Cycles: %d", len(stats.Cycles))
+
+	if len(stats.Cycles) > 0 {
+
+		for i, cycle := range stats.Cycles {
+
+			t.Logf("  Cycle %d: %v", i+1, cycle)
+
+		}
+
+	}
+
+	// Assert robustness
+
+	// The analysis shouldn't panic even with disjoint IDs (from different projects)
+
+	// or potential ID collisions (if any)
+
+	if len(stats.PageRank) != len(combined) {
+
+		// Note: PageRank might be missing for isolated nodes if the algo filters them?
+
+		// No, PageRank typically covers all nodes.
+
+		// Actually, our Analyzer implementation initializes all nodes.
+
+		// But duplicate IDs (collisions) would merge.
+
+		// Let's check for unique IDs count
+
+		uniqueIDs := make(map[string]bool)
+
+		for _, i := range combined {
+
+			uniqueIDs[i.ID] = true
+
+		}
+
+		if len(stats.PageRank) != len(uniqueIDs) {
+
+			t.Errorf("PageRank count %d != Unique Issue Count %d", len(stats.PageRank), len(uniqueIDs))
+
+		}
+
+	}
+
+}

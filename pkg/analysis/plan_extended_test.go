@@ -32,7 +32,7 @@ func TestPlan_DiamondDependency(t *testing.T) {
 	if plan.TotalActionable != 1 {
 		t.Fatalf("Expected 1 actionable item, got %d", plan.TotalActionable)
 	}
-	
+
 	item := plan.Tracks[0].Items[0]
 	if item.ID != "D" {
 		t.Errorf("Expected D to be actionable, got %s", item.ID)
@@ -52,9 +52,9 @@ func TestPlan_DisconnectedComponents(t *testing.T) {
 	issues := []model.Issue{
 		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "B", Type: model.DepBlocks}}},
 		{ID: "B", Status: model.StatusOpen},
-		
+
 		{ID: "C", Status: model.StatusOpen},
-		
+
 		{ID: "D", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "E", Type: model.DepBlocks}}},
 		{ID: "E", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "F", Type: model.DepBlocks}}},
 		{ID: "F", Status: model.StatusOpen},
@@ -82,11 +82,11 @@ func TestPlan_WithClosedBlockers(t *testing.T) {
 	// B depends on C (closed)
 	// C depends on D (open)
 	// D is open
-	
+
 	// Wait, if B is closed, A's dependency on B is satisfied.
 	// A is actionable.
 	// D is actionable (leaf).
-	
+
 	issues := []model.Issue{
 		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "B", Type: model.DepBlocks}}},
 		{ID: "B", Status: model.StatusClosed, Dependencies: []*model.Dependency{{DependsOnID: "C", Type: model.DepBlocks}}},
@@ -134,8 +134,16 @@ func TestPlan_ComplexPriorities(t *testing.T) {
 	}
 
 	// Check order
-	if items[0].ID != "p0" { t.Errorf("Expected p0 first, got %s", items[0].ID) }
-	if items[1].ID != "p1" { t.Errorf("Expected p1 second, got %s", items[1].ID) }
-	if items[2].ID != "p2" { t.Errorf("Expected p2 third, got %s", items[2].ID) }
-	if items[3].ID != "p3" { t.Errorf("Expected p3 fourth, got %s", items[3].ID) }
+	if items[0].ID != "p0" {
+		t.Errorf("Expected p0 first, got %s", items[0].ID)
+	}
+	if items[1].ID != "p1" {
+		t.Errorf("Expected p1 second, got %s", items[1].ID)
+	}
+	if items[2].ID != "p2" {
+		t.Errorf("Expected p2 third, got %s", items[2].ID)
+	}
+	if items[3].ID != "p3" {
+		t.Errorf("Expected p3 fourth, got %s", items[3].ID)
+	}
 }

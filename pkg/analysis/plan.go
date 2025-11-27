@@ -24,7 +24,7 @@ type ExecutionTrack struct {
 
 // ExecutionPlan is the complete work plan with parallel tracks
 type ExecutionPlan struct {
-	Tracks         []ExecutionTrack `json:"tracks"`
+	Tracks          []ExecutionTrack `json:"tracks"`
 	TotalActionable int              `json:"total_actionable"`
 	TotalBlocked    int              `json:"total_blocked"`
 	Summary         PlanSummary      `json:"summary"`
@@ -32,9 +32,9 @@ type ExecutionPlan struct {
 
 // PlanSummary provides quick insights about the plan
 type PlanSummary struct {
-	HighestImpact   string `json:"highest_impact"`    // Issue ID that unblocks the most
-	ImpactReason    string `json:"impact_reason"`     // Why it's highest impact
-	UnblocksCount   int    `json:"unblocks_count"`    // How many it unblocks
+	HighestImpact string `json:"highest_impact"` // Issue ID that unblocks the most
+	ImpactReason  string `json:"impact_reason"`  // Why it's highest impact
+	UnblocksCount int    `json:"unblocks_count"` // How many it unblocks
 }
 
 // GetExecutionPlan generates a dependency-respecting execution plan

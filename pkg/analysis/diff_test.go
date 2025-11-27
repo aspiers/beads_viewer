@@ -127,6 +127,23 @@ func TestCompareSnapshots_ReopenedIssues(t *testing.T) {
 	}
 }
 
+func TestDependencySetIgnoresNilAndEmpty(t *testing.T) {
+	deps := []*model.Dependency{
+		nil,
+		{DependsOnID: ""},
+		{DependsOnID: "A"},
+	}
+
+	set := dependencySet(deps)
+
+	if len(set) != 1 {
+		t.Fatalf("expected only non-empty dependencies to be counted, got %d", len(set))
+	}
+	if !set["A"] {
+		t.Fatalf("expected dependency 'A' to be present")
+	}
+}
+
 func TestCompareSnapshots_ModifiedIssues(t *testing.T) {
 	fromIssues := []model.Issue{
 		{ID: "ISSUE-1", Title: "Original Title", Status: model.StatusOpen, Priority: 2},
