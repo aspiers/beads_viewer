@@ -199,6 +199,36 @@ func TestGetActionableIssuesMissingBlocker(t *testing.T) {
 	}
 }
 
+func TestAnalyzeIgnoresNonBlockingDependencies(t *testing.T) {
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "B", Type: model.DepRelated}, // non-blocking edge
+		}},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "A", Type: model.DepRelated}, // back edge would create cycle if counted
+		}},
+	}
+
+	an := analysis.NewAnalyzer(issues)
+	stats := an.Analyze()
+
+	// Non-blocking deps should not introduce graph edges
+	if got := stats.InDegree["A"]; got != 0 {
+		t.Fatalf("expected A indegree 0 when only related edges exist, got %d", got)
+	}
+	if got := stats.OutDegree["A"]; got != 0 {
+		t.Fatalf("expected A outdegree 0 when only related edges exist, got %d", got)
+	}
+
+	// Topological order should include both nodes (no cycles introduced)
+	if len(stats.TopologicalOrder) != 2 {
+		t.Fatalf("expected topological order length 2, got %d", len(stats.TopologicalOrder))
+	}
+	if len(stats.Cycles) != 0 {
+		t.Fatalf("expected no cycles from non-blocking edges, got %d", len(stats.Cycles))
+	}
+}
+
 func TestGetActionableIssuesRelatedDoesntBlock(t *testing.T) {
 	// A has "related" dep on B (open)
 	// Related deps don't block → A is actionable
@@ -358,7 +388,7 @@ func TestGetBlockers(t *testing.T) {
 	issues := []model.Issue{
 		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{
 			{DependsOnID: "B", Type: model.DepBlocks},
-			{DependsOnID: "C", Type: model.DepRelated}, // Not a blocker
+			{DependsOnID: "C", Type: model.DepRelated},      // Not a blocker
 			{DependsOnID: "missing", Type: model.DepBlocks}, // Missing
 		}},
 		{ID: "B", Status: model.StatusOpen},

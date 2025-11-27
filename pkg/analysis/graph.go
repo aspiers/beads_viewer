@@ -18,8 +18,8 @@ type GraphStats struct {
 	Eigenvector       map[string]float64
 	Hubs              map[string]float64
 	Authorities       map[string]float64
-	OutDegree         map[string]int     // Number of issues blocked by this issue
-	InDegree          map[string]int     // Number of dependencies this issue has
+	OutDegree         map[string]int     // Number of dependencies this issue has (edges out)
+	InDegree          map[string]int     // Number of issues that depend on this issue (edges in)
 	CriticalPathScore map[string]float64 // Heuristic for critical path
 	Cycles            [][]string
 	Density           float64
@@ -51,31 +51,33 @@ func NewAnalyzer(issues []model.Issue) *Analyzer {
 	}
 
 	// 2. Add Edges (Dependency Direction)
-	// If A depends on B, B blocks A.
-	// Edge: B -> A (Blocker -> Blocked)
-	// This way, PageRank flows from Blockers to Blocked.
-	// High PageRank = "Highly Blocked" (Fragile).
-	// REVERSE Logic for "Criticality":
-	// If we want "Critical" tasks to have high scores, we should flow FROM Blocked TO Blocker?
-	// Or just use OutDegree (Blocks count).
-	// Let's stick to natural flow: B -> A means B "causes" A.
-	// Wait, usually dependency graph is A -> B (A depends on B).
-	// Let's use: Edge A -> B means A DEPENDS ON B.
-	// Then High In-Degree = Many things depend on me (I am a blocker).
-	// High Out-Degree = I depend on many things (I am blocked).
-
+	// We only model *blocking* relationships in the analysis graph. Non-blocking
+	// links such as "related" should not influence centrality metrics or cycle
+	// detection because they do not gate execution order. Treat parent-child as a
+	// blocking relationship to preserve hierarchical execution ordering.
 	for _, issue := range issues {
 		u, ok := idToNode[issue.ID]
 		if !ok {
 			continue
-		} // Should not happen
+		}
 
 		for _, dep := range issue.Dependencies {
+			if dep == nil {
+				continue
+			}
+
+			depType := dep.Type
+			if depType == "" {
+				depType = model.DepBlocks // Default legacy/unspecified deps to blocking
+			}
+
+			if depType != model.DepBlocks {
+				continue // Ignore non-blocking links (related, parent-child, discovered-from, etc.)
+			}
+
 			v, exists := idToNode[dep.DependsOnID]
 			if exists {
-				// Issue (u) DependsOn (v)
-				// Edge: u -> v
-				// Meaning: "Control flows from u to v" (u needs v)
+				// Issue (u) depends on v → edge u -> v
 				g.SetEdge(g.NewEdge(g.Node(u), g.Node(v)))
 			}
 		}
