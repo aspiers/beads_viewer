@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,7 +28,7 @@ func TestEndToEndDriftWorkflow(t *testing.T) {
 	}
 
 	// 3. Create initial healthy graph
-	// A -> B -> C
+	// Chain A <- B <- C (acyclic)
 	jsonlContent := `{"id": "A", "title": "Task A", "status": "open", "priority": 1, "issue_type": "task"}
 {"id": "B", "title": "Task B", "status": "open", "priority": 1, "issue_type": "task", "dependencies": [{"depends_on_id": "A", "type": "blocks"}]}
 {"id": "C", "title": "Task C", "status": "open", "priority": 1, "issue_type": "task", "dependencies": [{"depends_on_id": "B", "type": "blocks"}]}`
@@ -58,7 +59,7 @@ func TestEndToEndDriftWorkflow(t *testing.T) {
 	}
 
 	// 6. Introduce Drift (New Cycle)
-	// Create cycle A -> C -> B -> A
+	// Create cycle A <- B <- C <- A
 	driftedContent := `{"id": "A", "title": "Task A", "status": "open", "priority": 1, "issue_type": "task", "dependencies": [{"depends_on_id": "C", "type": "blocks"}]}
 {"id": "B", "title": "Task B", "status": "open", "priority": 1, "issue_type": "task", "dependencies": [{"depends_on_id": "A", "type": "blocks"}]}
 {"id": "C", "title": "Task C", "status": "open", "priority": 1, "issue_type": "task", "dependencies": [{"depends_on_id": "B", "type": "blocks"}]}`
@@ -116,5 +117,100 @@ func TestEndToEndDriftWorkflow(t *testing.T) {
 		if firstAlert["type"] != "new_cycle" {
 			t.Errorf("Expected new_cycle alert, got %v", firstAlert["type"])
 		}
+	}
+}
+
+func TestDriftAlerts(t *testing.T) {
+	// 1. Build
+	tempDir := t.TempDir()
+	binPath := filepath.Join(tempDir, "bv")
+	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/bv/main.go")
+	cmd.Dir = "../../"
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Build failed: %v\n%s", err, out)
+	}
+
+	// 2. Setup Env
+	envDir := filepath.Join(tempDir, "env")
+	if err := os.MkdirAll(filepath.Join(envDir, ".beads"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	beadsPath := filepath.Join(envDir, ".beads", "beads.jsonl")
+
+	// 3. Create Baseline
+	// 10 Nodes (A..J). 1 Edge (A->B).
+	// Density = 1 / (10*9) = 1/90 = 0.0111
+	// Blocked: 0 (all marked open)
+	baselineContent := ""
+	// A is free
+	baselineContent += `{"id": "A", "status": "open", "issue_type": "task"}` + "\n"
+	// B depends on A
+	baselineContent += `{"id": "B", "status": "open", "issue_type": "task", "dependencies": [{"depends_on_id": "A", "type": "blocks"}]}` + "\n"
+	// C..J are free
+	ids := []string{"C", "D", "E", "F", "G", "H", "I", "J"}
+	for _, id := range ids {
+		baselineContent += fmt.Sprintf(`{"id": "%s", "status": "open", "issue_type": "task"}`, id) + "\n"
+	}
+
+	if err := os.WriteFile(beadsPath, []byte(baselineContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Save Baseline
+	cmdSave := exec.Command(binPath, "--save-baseline", "Baseline")
+	cmdSave.Dir = envDir
+	if out, err := cmdSave.CombinedOutput(); err != nil {
+		t.Fatalf("Save baseline failed: %v\n%s", err, out)
+	}
+
+	// 4. Create High Density & Blocked Increase
+	// Keep 10 Nodes.
+	// Add edges: A->C, A->D, ..., A->J (8 more edges).
+	// Total Edges: 9.
+	// Density = 9/90 = 0.1.
+	// Increase: (0.1 - 0.0111) / 0.0111 ~ 800%. Warning.
+	
+	// Blocked:
+	// Mark B..J as "blocked".
+	// Total Blocked: 9.
+	// Baseline Blocked: 0.
+	// Delta: 9. Threshold 5. Warning.
+	
+driftContent := ""
+	driftContent += `{"id": "A", "status": "open", "issue_type": "task"}` + "\n"
+	
+	// B..J depend on A and are blocked
+	allIds := []string{"B", "C", "D", "E", "F", "G", "H", "I", "J"}
+	for _, id := range allIds {
+		driftContent += fmt.Sprintf(`{"id": "%s", "status": "blocked", "issue_type": "task", "dependencies": [{"depends_on_id": "A", "type": "blocks"}]}`, id) + "\n"
+	}
+
+	if err := os.WriteFile(beadsPath, []byte(driftContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 5. Check Drift
+	cmdCheck := exec.Command(binPath, "--check-drift")
+	cmdCheck.Dir = envDir
+	out, err := cmdCheck.CombinedOutput()
+
+	// Expect Exit Code 2 (Warning)
+	if err == nil {
+		t.Fatalf("Expected warning exit code, got success. Output:\n%s", out)
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("Expected ExitError, got %T: %v", err, err)
+	}
+	if exitErr.ExitCode() != 2 {
+		t.Errorf("Expected exit code 2 (warning), got %d", exitErr.ExitCode())
+	}
+
+	outputStr := string(out)
+	if !strings.Contains(outputStr, "Graph density increased") {
+		t.Errorf("Output missing density warning. Got:\n%s", outputStr)
+	}
+	if !strings.Contains(outputStr, "Blocked issues increased") {
+		t.Error("Output missing blocked issues warning")
 	}
 }
