@@ -1,4 +1,4 @@
-module beads_viewer
+module github.com/Dicklesworthstone/beads_viewer
 
 // Keep this in sync with CI (see .github/workflows/ci.yml) and the minimum
 // version available in common dev environments.
