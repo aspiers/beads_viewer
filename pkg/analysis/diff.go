@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"beads_viewer/pkg/model"
+	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 )
 
 // Snapshot represents the state of issues at a point in time
@@ -412,148 +412,19 @@ func avgMapValue(m map[string]float64) float64 {
 	if len(m) == 0 {
 		return 0
 	}
+	
+	// Sort keys for deterministic summation order
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	var sum float64
-	for _, v := range m {
-		sum += v
+	for _, k := range keys {
+		sum += m[k]
 	}
 	return sum / float64(len(m))
-}
-
-// calculateSummary generates summary statistics
-func calculateSummary(diff *SnapshotDiff) DiffSummary {
-	summary := DiffSummary{
-		IssuesAdded:      len(diff.NewIssues),
-		IssuesClosed:     len(diff.ClosedIssues),
-		IssuesRemoved:    len(diff.RemovedIssues),
-		IssuesReopened:   len(diff.ReopenedIssues),
-		IssuesModified:   len(diff.ModifiedIssues),
-		CyclesIntroduced: len(diff.NewCycles),
-		CyclesResolved:   len(diff.ResolvedCycles),
-	}
-
-	summary.TotalChanges = summary.IssuesAdded + summary.IssuesClosed +
-		summary.IssuesRemoved + summary.IssuesReopened + summary.IssuesModified
-
-	summary.NetIssueChange = summary.IssuesAdded - summary.IssuesRemoved
-
-	// Determine health trend
-	score := 0
-
-	// Resolving cycles is good
-	score += summary.CyclesResolved * 2
-	// Introducing cycles is bad
-	score -= summary.CyclesIntroduced * 3
-
-	// Closing issues is good
-	score += summary.IssuesClosed
-
-	// Reopening issues is mildly concerning
-	score -= summary.IssuesReopened
-
-	// Net decrease in blocked issues is good
-	if diff.MetricDeltas.BlockedIssues < 0 {
-		score += 2
-	} else if diff.MetricDeltas.BlockedIssues > 0 {
-		score -= 1
-	}
-
-	if score > 1 {
-		summary.HealthTrend = "improving"
-	} else if score < -1 {
-		summary.HealthTrend = "degrading"
-	} else {
-		summary.HealthTrend = "stable"
-	}
-
-	return summary
-}
-
-// Helper functions
-
-func priorityString(p int) string {
-	if p >= 0 && p <= 9 {
-		return "P" + string(rune('0'+p))
-	}
-	// For priority >= 10, use standard formatting
-	return "P" + fmt.Sprintf("%d", p)
-}
-
-func dependencySet(deps []*model.Dependency) map[string]bool {
-	set := make(map[string]bool)
-	for _, dep := range deps {
-		if dep == nil || dep.DependsOnID == "" {
-			continue
-		}
-		// Key includes type to detect type changes (e.g. related -> blocks)
-		key := fmt.Sprintf("%s:%s", dep.DependsOnID, dep.Type)
-		set[key] = true
-	}
-	return set
-}
-
-func stringSet(strs []string) map[string]bool {
-	set := make(map[string]bool)
-	for _, s := range strs {
-		set[s] = true
-	}
-	return set
-}
-
-func equalStringSet(a, b map[string]bool) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k := range a {
-		if !b[k] {
-			return false
-		}
-	}
-	return true
-}
-
-func formatDeps(deps map[string]bool) string {
-	if len(deps) == 0 {
-		return "(none)"
-	}
-	var list []string
-	for dep := range deps {
-		list = append(list, dep)
-	}
-	sort.Strings(list)
-	return joinStrings(list, ", ")
-}
-
-func formatLabels(labels []string) string {
-	if len(labels) == 0 {
-		return "(none)"
-	}
-	sorted := make([]string, len(labels))
-	copy(sorted, labels)
-	sort.Strings(sorted)
-	return joinStrings(sorted, ", ")
-}
-
-func joinStrings(strs []string, sep string) string {
-	if len(strs) == 0 {
-		return ""
-	}
-	result := strs[0]
-	for i := 1; i < len(strs); i++ {
-		result += sep + strs[i]
-	}
-	return result
-}
-
-func sortIssuesByID(issues []model.Issue) {
-	sort.Slice(issues, func(i, j int) bool {
-		return issues[i].ID < issues[j].ID
-	})
-}
-
-func sortModifiedByID(modified []ModifiedIssue) {
-	sort.Slice(modified, func(i, j int) bool {
-		return modified[i].IssueID < modified[j].IssueID
-	})
 }
 
 // IsEmpty returns true if there are no changes

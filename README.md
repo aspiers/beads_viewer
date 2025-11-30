@@ -4,6 +4,7 @@
 ![Go Version](https://img.shields.io/github/go-mod/go-version/Dicklesworthstone/beads_viewer?style=for-the-badge&color=6272a4)
 ![License](https://img.shields.io/badge/License-MIT-50fa7b?style=for-the-badge)
 ![Build Status](https://img.shields.io/github/actions/workflow/status/Dicklesworthstone/beads_viewer/ci.yml?style=for-the-badge&logo=github)
+[![Coverage](https://codecov.io/gh/Dicklesworthstone/beads_viewer/branch/main/graph/badge.svg)](https://codecov.io/gh/Dicklesworthstone/beads_viewer)
 
 > **The elegant, keyboard-driven terminal interface for the [Beads](https://github.com/steveyegge/beads) issue tracker.**
 
@@ -35,7 +36,7 @@
 ### ⚡ Quick Install
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/github.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
 ```
 
 ---
@@ -1367,7 +1368,7 @@ A: `bv` is data-agnostic. The Beads data schema supports an `external_ref` field
 The fastest way to get started. Detects your OS and architecture automatically.
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/github.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
 ```
 
 ### Build from Source
