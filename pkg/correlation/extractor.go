@@ -225,13 +225,18 @@ func (e *Extractor) parseDiff(diffData []byte, info commitInfo, filterBeadID str
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Skip diff headers and context lines
+		// Skip empty lines and diff metadata lines that start with:
+		// '@' = hunk headers (@@)
+		// 'd' = diff --git
+		// 'i' = index
+		// 'n' = new file mode
+		// We only care about lines starting with +/- which are actual changes.
 		if len(line) == 0 || line[0] == '@' || line[0] == 'd' || line[0] == 'i' || line[0] == 'n' {
 			continue
 		}
 
-		// Check for removed lines (old state)
-		if strings.HasPrefix(line, "-{") || (len(line) > 1 && line[0] == '-' && line[1] == '{') {
+		// Check for removed lines (old state) - JSON starts with {
+		if strings.HasPrefix(line, "-{") {
 			jsonStr := strings.TrimPrefix(line, "-")
 			if snap, ok := parseBeadJSON(jsonStr); ok {
 				if filterBeadID == "" || snap.ID == filterBeadID {
@@ -242,8 +247,8 @@ func (e *Extractor) parseDiff(diffData []byte, info commitInfo, filterBeadID str
 			continue
 		}
 
-		// Check for added lines (new state)
-		if strings.HasPrefix(line, "+{") || (len(line) > 1 && line[0] == '+' && line[1] == '{') {
+		// Check for added lines (new state) - JSON starts with {
+		if strings.HasPrefix(line, "+{") {
 			jsonStr := strings.TrimPrefix(line, "+")
 			if snap, ok := parseBeadJSON(jsonStr); ok {
 				if filterBeadID == "" || snap.ID == filterBeadID {

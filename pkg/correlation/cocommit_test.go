@@ -1,6 +1,7 @@
 package correlation
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -287,12 +288,12 @@ func TestGenerateReason(t *testing.T) {
 	}
 
 	// Should mention the event type
-	if !contains(reason, "closed") {
+	if !strings.Contains(reason, "closed") {
 		t.Errorf("reason should mention event type, got: %s", reason)
 	}
 
 	// Should mention bead ID reference
-	if !contains(reason, "bead ID") {
+	if !strings.Contains(reason, "bead ID") {
 		t.Errorf("reason should mention bead ID reference, got: %s", reason)
 	}
 }
@@ -335,19 +336,4 @@ func TestCreateCorrelatedCommit(t *testing.T) {
 	if commit.Author != event.Author {
 		t.Errorf("Author mismatch: got %s, want %s", commit.Author, event.Author)
 	}
-}
-
-// Helper function
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

@@ -12,6 +12,9 @@ import (
 	"strings"
 )
 
+// renamePattern matches git's brace notation for renames: {old => new}
+var renamePattern = regexp.MustCompile(`\{[^}]* => ([^}]*)\}`)
+
 // CoCommitExtractor extracts files that were changed in the same commit as bead changes
 type CoCommitExtractor struct {
 	repoPath string
@@ -233,8 +236,7 @@ func extractNewPath(path string) string {
 	// Handle "{prefix/}{old => new}{/suffix}" format
 	if strings.Contains(path, "{") {
 		// Complex case: "pkg/{old => new}/file.go"
-		re := regexp.MustCompile(`\{[^}]* => ([^}]*)\}`)
-		path = re.ReplaceAllString(path, "$1")
+		path = renamePattern.ReplaceAllString(path, "$1")
 		return path
 	}
 

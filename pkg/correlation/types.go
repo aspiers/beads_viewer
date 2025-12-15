@@ -148,10 +148,10 @@ type HistoryReport struct {
 
 // FilterOptions controls which beads to include in the history report
 type FilterOptions struct {
-	BeadIDs     []string   `json:"bead_ids,omitempty"`      // Specific beads to include (nil = all)
-	Since       *time.Time `json:"since,omitempty"`         // Only events after this time
-	Until       *time.Time `json:"until,omitempty"`         // Only events before this time
-	Authors     []string   `json:"authors,omitempty"`       // Filter by author name/email
-	MinConfidence float64  `json:"min_confidence,omitempty"` // Minimum confidence for commits (default 0)
-	IncludeClosed bool     `json:"include_closed"`          // Include closed beads (default true)
+	BeadIDs       []string   `json:"bead_ids,omitempty"`       // Specific beads to include (nil = all)
+	Since         *time.Time `json:"since,omitempty"`          // Only events after this time
+	Until         *time.Time `json:"until,omitempty"`          // Only events before this time
+	Authors       []string   `json:"authors,omitempty"`        // Filter by author name/email
+	MinConfidence float64    `json:"min_confidence,omitempty"` // Minimum confidence for commits (default 0)
+	IncludeClosed bool       `json:"include_closed"`           // Include closed beads (Go default: false)
 }
