@@ -1328,3 +1328,226 @@ func (r *LabelPageRankResult) GetTopCoreIssues(n int) []RankedIssue {
 func (r *LabelPageRankResult) GetNormalizedScore(id string) float64 {
 	return r.Normalized[id]
 }
+
+// ============================================================================
+// Label Attention Score (bv-116)
+// Compute attention needed for labels based on PageRank, staleness, and velocity
+// ============================================================================
+
+// LabelAttentionScore represents how much attention a label needs
+type LabelAttentionScore struct {
+	Label           string  `json:"label"`
+	AttentionScore  float64 `json:"attention_score"`  // Higher = needs more attention
+	NormalizedScore float64 `json:"normalized_score"` // 0-1 normalized
+	Rank            int     `json:"rank"`             // 1-based rank
+
+	// Component factors
+	PageRankSum    float64 `json:"pagerank_sum"`    // Sum of PageRank scores
+	StalenessFactor float64 `json:"staleness_factor"` // Higher = more stale
+	BlockImpact    float64 `json:"block_impact"`    // Issues blocked by this label
+	VelocityFactor float64 `json:"velocity_factor"` // Higher = more velocity (good)
+
+	// Context
+	OpenCount   int `json:"open_count"`
+	BlockedCount int `json:"blocked_count"`
+	StaleCount  int `json:"stale_count"`
+}
+
+// LabelAttentionResult contains attention scores for all labels
+type LabelAttentionResult struct {
+	GeneratedAt   time.Time             `json:"generated_at"`
+	Labels        []LabelAttentionScore `json:"labels"`         // Sorted by attention (descending)
+	TopAttention  []string              `json:"top_attention"`  // Labels needing most attention
+	LowAttention  []string              `json:"low_attention"`  // Labels with least attention needed
+	MaxScore      float64               `json:"max_score"`
+	MinScore      float64               `json:"min_score"`
+	TotalLabels   int                   `json:"total_labels"`
+}
+
+// ComputeLabelAttentionScores calculates attention needed for all labels.
+// Formula: attention = (pagerank_sum * staleness_factor * block_impact) / velocity
+// Higher score = needs more attention.
+//
+// Factors:
+// - pagerank_sum: Centrality importance of issues in this label
+// - staleness_factor: 1 + (stale_count / open_count), higher if issues are stale
+// - block_impact: Number of issues blocked by this label
+// - velocity: Recent closures (higher = healthier, less attention needed)
+func ComputeLabelAttentionScores(issues []model.Issue, cfg LabelHealthConfig, now time.Time) LabelAttentionResult {
+	result := LabelAttentionResult{
+		GeneratedAt: now,
+		Labels:      []LabelAttentionScore{},
+	}
+
+	labels := ExtractLabels(issues)
+	if labels.LabelCount == 0 {
+		return result
+	}
+
+	// Build issue map for lookups
+	issueMap := make(map[string]model.Issue, len(issues))
+	for _, iss := range issues {
+		issueMap[iss.ID] = iss
+	}
+
+	// Compute attention for each label
+	var scores []LabelAttentionScore
+	for _, label := range labels.Labels {
+		score := computeLabelAttention(label, issues, issueMap, cfg, now)
+		scores = append(scores, score)
+	}
+
+	// Find min/max for normalization
+	var maxScore, minScore float64
+	first := true
+	for _, s := range scores {
+		if first {
+			maxScore = s.AttentionScore
+			minScore = s.AttentionScore
+			first = false
+		} else {
+			if s.AttentionScore > maxScore {
+				maxScore = s.AttentionScore
+			}
+			if s.AttentionScore < minScore {
+				minScore = s.AttentionScore
+			}
+		}
+	}
+
+	result.MaxScore = maxScore
+	result.MinScore = minScore
+
+	// Normalize scores
+	scoreRange := maxScore - minScore
+	for i := range scores {
+		if scoreRange > 0 {
+			scores[i].NormalizedScore = (scores[i].AttentionScore - minScore) / scoreRange
+		} else {
+			scores[i].NormalizedScore = 0.5
+		}
+	}
+
+	// Sort by attention score descending
+	sort.Slice(scores, func(i, j int) bool {
+		if scores[i].AttentionScore != scores[j].AttentionScore {
+			return scores[i].AttentionScore > scores[j].AttentionScore
+		}
+		return scores[i].Label < scores[j].Label
+	})
+
+	// Assign ranks
+	for i := range scores {
+		scores[i].Rank = i + 1
+	}
+
+	result.Labels = scores
+	result.TotalLabels = len(scores)
+
+	// Extract top/low attention labels
+	topN := minInt(3, len(scores))
+	for i := 0; i < topN; i++ {
+		result.TopAttention = append(result.TopAttention, scores[i].Label)
+	}
+	for i := len(scores) - topN; i < len(scores); i++ {
+		if i >= 0 {
+			result.LowAttention = append(result.LowAttention, scores[i].Label)
+		}
+	}
+
+	return result
+}
+
+// computeLabelAttention calculates attention score for a single label
+func computeLabelAttention(label string, issues []model.Issue, issueMap map[string]model.Issue, cfg LabelHealthConfig, now time.Time) LabelAttentionScore {
+	score := LabelAttentionScore{
+		Label: label,
+	}
+
+	// Get issues with this label
+	var labeledIssues []model.Issue
+	for _, iss := range issues {
+		if HasLabel(iss, label) {
+			labeledIssues = append(labeledIssues, iss)
+		}
+	}
+
+	if len(labeledIssues) == 0 {
+		return score
+	}
+
+	// Count open and blocked issues
+	for _, iss := range labeledIssues {
+		if iss.Status != model.StatusClosed {
+			score.OpenCount++
+		}
+	}
+
+	// Compute PageRank sum for this label
+	sg := ComputeLabelSubgraph(issues, label)
+	if !sg.IsEmpty() {
+		pr := ComputeLabelPageRank(sg)
+		for _, s := range pr.CoreOnly {
+			score.PageRankSum += s
+		}
+	}
+
+	// Compute staleness factor
+	freshness := ComputeFreshnessMetrics(labeledIssues, now, cfg.StaleThresholdDays)
+	score.StaleCount = freshness.StaleCount
+	if score.OpenCount > 0 {
+		score.StalenessFactor = 1.0 + float64(score.StaleCount)/float64(score.OpenCount)
+	} else {
+		score.StalenessFactor = 1.0
+	}
+
+	// Compute block impact (how many issues are blocked by this label)
+	blockImpact := 0
+	for _, iss := range labeledIssues {
+		// Count how many other issues depend on this one
+		for _, other := range issues {
+			if other.ID == iss.ID {
+				continue
+			}
+			for _, dep := range other.Dependencies {
+				if dep != nil && dep.DependsOnID == iss.ID && dep.Type == model.DepBlocks {
+					blockImpact++
+				}
+			}
+		}
+	}
+	score.BlockImpact = float64(blockImpact)
+	score.BlockedCount = blockImpact
+
+	// Compute velocity factor
+	velocity := ComputeVelocityMetrics(labeledIssues, now)
+	// Use closed in last 30 days + 1 to avoid division by zero
+	score.VelocityFactor = float64(velocity.ClosedLast30Days) + 1.0
+
+	// Compute attention score
+	// attention = (pagerank_sum * staleness_factor * (1 + block_impact)) / velocity
+	// Higher = needs more attention
+	numerator := score.PageRankSum * score.StalenessFactor * (1.0 + score.BlockImpact)
+	score.AttentionScore = numerator / score.VelocityFactor
+
+	return score
+}
+
+// GetTopAttentionLabels returns the top N labels needing attention
+func (r *LabelAttentionResult) GetTopAttentionLabels(n int) []LabelAttentionScore {
+	if n > len(r.Labels) {
+		n = len(r.Labels)
+	}
+	return r.Labels[:n]
+}
+
+// GetLabelAttention returns the attention score for a specific label
+func (r *LabelAttentionResult) GetLabelAttention(label string) *LabelAttentionScore {
+	for i := range r.Labels {
+		if r.Labels[i].Label == label {
+			return &r.Labels[i]
+		}
+	}
+	return nil
+}
+

@@ -1241,3 +1241,213 @@ func TestComputeLabelPageRankGetTopCoreIssues(t *testing.T) {
 		t.Errorf("Expected 3 core issues when asking for 10, got %d", len(allCore))
 	}
 }
+
+// ============================================================================
+// Label Attention Score Tests (bv-116)
+// ============================================================================
+
+func TestComputeLabelAttentionScoresEmpty(t *testing.T) {
+	cfg := DefaultLabelHealthConfig()
+	now := time.Now()
+
+	result := ComputeLabelAttentionScores([]model.Issue{}, cfg, now)
+
+	if result.TotalLabels != 0 {
+		t.Errorf("Expected 0 labels, got %d", result.TotalLabels)
+	}
+	if len(result.Labels) != 0 {
+		t.Errorf("Expected empty labels slice, got %d", len(result.Labels))
+	}
+}
+
+func TestComputeLabelAttentionScoresSingleLabel(t *testing.T) {
+	cfg := DefaultLabelHealthConfig()
+	now := time.Now()
+
+	issues := []model.Issue{
+		{ID: "bv-1", Labels: []string{"api"}, Status: model.StatusOpen, UpdatedAt: now},
+		{ID: "bv-2", Labels: []string{"api"}, Status: model.StatusOpen, UpdatedAt: now},
+	}
+
+	result := ComputeLabelAttentionScores(issues, cfg, now)
+
+	if result.TotalLabels != 1 {
+		t.Errorf("Expected 1 label, got %d", result.TotalLabels)
+	}
+	if len(result.Labels) != 1 {
+		t.Errorf("Expected 1 label score, got %d", len(result.Labels))
+	}
+	if result.Labels[0].Label != "api" {
+		t.Errorf("Expected label 'api', got '%s'", result.Labels[0].Label)
+	}
+	if result.Labels[0].Rank != 1 {
+		t.Errorf("Expected rank 1, got %d", result.Labels[0].Rank)
+	}
+}
+
+func TestComputeLabelAttentionScoresRanking(t *testing.T) {
+	cfg := DefaultLabelHealthConfig()
+	now := time.Now()
+	staleDate := now.Add(-30 * 24 * time.Hour) // 30 days ago
+
+	// Create scenarios where one label clearly needs more attention:
+	// - "stale" label: all stale issues
+	// - "active" label: all fresh issues
+	issues := []model.Issue{
+		// Stale label - should need more attention
+		{ID: "bv-1", Labels: []string{"stale"}, Status: model.StatusOpen, UpdatedAt: staleDate},
+		{ID: "bv-2", Labels: []string{"stale"}, Status: model.StatusOpen, UpdatedAt: staleDate},
+		// Active label - should need less attention
+		{ID: "bv-3", Labels: []string{"active"}, Status: model.StatusOpen, UpdatedAt: now},
+		{ID: "bv-4", Labels: []string{"active"}, Status: model.StatusClosed, UpdatedAt: now, ClosedAt: &now},
+	}
+
+	result := ComputeLabelAttentionScores(issues, cfg, now)
+
+	if result.TotalLabels != 2 {
+		t.Fatalf("Expected 2 labels, got %d", result.TotalLabels)
+	}
+
+	// Should be sorted by attention descending
+	// Stale label should have higher staleness factor
+	staleScore := result.GetLabelAttention("stale")
+	activeScore := result.GetLabelAttention("active")
+
+	if staleScore == nil || activeScore == nil {
+		t.Fatal("Expected both labels to have scores")
+	}
+
+	// Stale should have higher staleness factor
+	if staleScore.StalenessFactor <= activeScore.StalenessFactor {
+		t.Errorf("Expected stale label to have higher staleness factor: stale=%f, active=%f",
+			staleScore.StalenessFactor, activeScore.StalenessFactor)
+	}
+}
+
+func TestComputeLabelAttentionScoresBlockImpact(t *testing.T) {
+	cfg := DefaultLabelHealthConfig()
+	now := time.Now()
+
+	// blocker label blocks other issues
+	issues := []model.Issue{
+		{ID: "bv-1", Labels: []string{"blocker"}, Status: model.StatusOpen, UpdatedAt: now},
+		{
+			ID:     "bv-2",
+			Labels: []string{"blocked"},
+			Status: model.StatusOpen,
+			UpdatedAt: now,
+			Dependencies: []*model.Dependency{
+				{DependsOnID: "bv-1", Type: model.DepBlocks},
+			},
+		},
+		{
+			ID:     "bv-3",
+			Labels: []string{"blocked"},
+			Status: model.StatusOpen,
+			UpdatedAt: now,
+			Dependencies: []*model.Dependency{
+				{DependsOnID: "bv-1", Type: model.DepBlocks},
+			},
+		},
+	}
+
+	result := ComputeLabelAttentionScores(issues, cfg, now)
+
+	blockerScore := result.GetLabelAttention("blocker")
+	blockedScore := result.GetLabelAttention("blocked")
+
+	if blockerScore == nil || blockedScore == nil {
+		t.Fatal("Expected both labels to have scores")
+	}
+
+	// Blocker label should have higher block impact
+	if blockerScore.BlockImpact != 2 {
+		t.Errorf("Expected blocker to have block impact of 2, got %f", blockerScore.BlockImpact)
+	}
+	if blockedScore.BlockImpact != 0 {
+		t.Errorf("Expected blocked to have block impact of 0, got %f", blockedScore.BlockImpact)
+	}
+}
+
+func TestComputeLabelAttentionScoresVelocity(t *testing.T) {
+	cfg := DefaultLabelHealthConfig()
+	now := time.Now()
+	recentClose := now.Add(-5 * 24 * time.Hour) // 5 days ago
+
+	issues := []model.Issue{
+		// Fast label - high velocity
+		{ID: "bv-1", Labels: []string{"fast"}, Status: model.StatusOpen, UpdatedAt: now},
+		{ID: "bv-2", Labels: []string{"fast"}, Status: model.StatusClosed, UpdatedAt: now, ClosedAt: &recentClose},
+		{ID: "bv-3", Labels: []string{"fast"}, Status: model.StatusClosed, UpdatedAt: now, ClosedAt: &recentClose},
+		// Slow label - no velocity
+		{ID: "bv-4", Labels: []string{"slow"}, Status: model.StatusOpen, UpdatedAt: now},
+		{ID: "bv-5", Labels: []string{"slow"}, Status: model.StatusOpen, UpdatedAt: now},
+	}
+
+	result := ComputeLabelAttentionScores(issues, cfg, now)
+
+	fastScore := result.GetLabelAttention("fast")
+	slowScore := result.GetLabelAttention("slow")
+
+	if fastScore == nil || slowScore == nil {
+		t.Fatal("Expected both labels to have scores")
+	}
+
+	// Fast label should have higher velocity factor
+	if fastScore.VelocityFactor <= slowScore.VelocityFactor {
+		t.Errorf("Expected fast label to have higher velocity: fast=%f, slow=%f",
+			fastScore.VelocityFactor, slowScore.VelocityFactor)
+	}
+}
+
+func TestComputeLabelAttentionScoresNormalized(t *testing.T) {
+	cfg := DefaultLabelHealthConfig()
+	now := time.Now()
+
+	issues := []model.Issue{
+		{ID: "bv-1", Labels: []string{"api"}, Status: model.StatusOpen, UpdatedAt: now},
+		{ID: "bv-2", Labels: []string{"ui"}, Status: model.StatusOpen, UpdatedAt: now},
+		{ID: "bv-3", Labels: []string{"core"}, Status: model.StatusOpen, UpdatedAt: now},
+	}
+
+	result := ComputeLabelAttentionScores(issues, cfg, now)
+
+	// Normalized scores should be between 0 and 1
+	for _, score := range result.Labels {
+		if score.NormalizedScore < 0 || score.NormalizedScore > 1 {
+			t.Errorf("Normalized score for %s out of range: %f", score.Label, score.NormalizedScore)
+		}
+	}
+}
+
+func TestComputeLabelAttentionScoresGetTop(t *testing.T) {
+	cfg := DefaultLabelHealthConfig()
+	now := time.Now()
+
+	issues := []model.Issue{
+		{ID: "bv-1", Labels: []string{"a"}, Status: model.StatusOpen, UpdatedAt: now},
+		{ID: "bv-2", Labels: []string{"b"}, Status: model.StatusOpen, UpdatedAt: now},
+		{ID: "bv-3", Labels: []string{"c"}, Status: model.StatusOpen, UpdatedAt: now},
+		{ID: "bv-4", Labels: []string{"d"}, Status: model.StatusOpen, UpdatedAt: now},
+		{ID: "bv-5", Labels: []string{"e"}, Status: model.StatusOpen, UpdatedAt: now},
+	}
+
+	result := ComputeLabelAttentionScores(issues, cfg, now)
+
+	// Get top 2
+	top2 := result.GetTopAttentionLabels(2)
+	if len(top2) != 2 {
+		t.Errorf("Expected 2 top labels, got %d", len(top2))
+	}
+
+	// First should be rank 1
+	if top2[0].Rank != 1 {
+		t.Errorf("Expected first to be rank 1, got %d", top2[0].Rank)
+	}
+
+	// Get more than exist
+	topAll := result.GetTopAttentionLabels(10)
+	if len(topAll) != 5 {
+		t.Errorf("Expected 5 labels when asking for 10, got %d", len(topAll))
+	}
+}
