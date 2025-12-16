@@ -84,38 +84,53 @@ func (a *Analyzer) GetExecutionPlan() ExecutionPlan {
 func (a *Analyzer) computeUnblocks(issueID string) []string {
 	var unblocks []string
 
-	for _, issue := range a.issueMap {
-		// Skip closed issues
-		if issue.Status == model.StatusClosed {
+	// Get the node ID for the issue being completed (the blocker)
+	blockerNodeID, ok := a.idToNode[issueID]
+	if !ok {
+		return nil
+	}
+
+	// Find all issues that depend on this one (incoming edges in dependency graph)
+	// Note: In our graph model, edge u -> v means u depends on v.
+	// So to find issues depending on v, we look for nodes u where u -> v exists.
+	// In gonum, To(id) returns nodes that have edges to id.
+	dependents := a.g.To(blockerNodeID)
+
+	for dependents.Next() {
+		dependentNode := dependents.Node()
+		dependentID := a.nodeToID[dependentNode.ID()]
+		dependentIssue := a.issueMap[dependentID]
+
+		// Skip closed issues (they don't need unblocking)
+		if dependentIssue.Status == model.StatusClosed {
 			continue
 		}
 
-		// Skip if this issue would still be blocked by other open issues
-		wouldBeBlocked := false
-		hasThisBlocker := false
+		// Check if this dependent is still blocked by OTHER open issues
+		// We look at its outgoing edges (dependencies)
+		otherBlockers := a.g.From(dependentNode.ID())
+		stillBlocked := false
 
-		for _, dep := range issue.Dependencies {
-			if dep.Type != model.DepBlocks {
+		for otherBlockers.Next() {
+			otherBlockerNode := otherBlockers.Node()
+			otherBlockerID := a.nodeToID[otherBlockerNode.ID()]
+
+			// Ignore the issue we are "completing"
+			if otherBlockerID == issueID {
 				continue
 			}
 
-			if dep.DependsOnID == issueID {
-				hasThisBlocker = true
-				continue
-			}
-
-			// Check if there's another open blocker
-			if blocker, exists := a.issueMap[dep.DependsOnID]; exists {
-				if blocker.Status != model.StatusClosed {
-					wouldBeBlocked = true
+			// Check status of other blocker
+			if otherBlocker, exists := a.issueMap[otherBlockerID]; exists {
+				if otherBlocker.Status != model.StatusClosed {
+					stillBlocked = true
 					break
 				}
 			}
 		}
 
-		// If this issue depends on issueID and would become unblocked
-		if hasThisBlocker && !wouldBeBlocked {
-			unblocks = append(unblocks, issue.ID)
+		if !stillBlocked {
+			unblocks = append(unblocks, dependentID)
 		}
 	}
 
