@@ -2539,6 +2539,11 @@ func (m *Model) updateViewportContent() {
 		item.CreatedAt.Format("2006-01-02"),
 	))
 
+	// Labels (bv-f103 fix: display labels in detail view)
+	if len(item.Labels) > 0 {
+		sb.WriteString(fmt.Sprintf("**Labels:** %s\n\n", strings.Join(item.Labels, ", ")))
+	}
+
 	// Graph Analysis (using thread-safe accessors)
 	pr := m.analysis.GetPageRankScore(item.ID)
 	bt := m.analysis.GetBetweennessScore(item.ID)
