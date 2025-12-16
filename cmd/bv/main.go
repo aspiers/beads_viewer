@@ -84,6 +84,7 @@ func main() {
 	pagesTitle := flag.String("pages-title", "", "Custom title for static site")
 	pagesIncludeClosed := flag.Bool("pages-include-closed", false, "Include closed issues in export")
 	previewPages := flag.String("preview-pages", "", "Preview existing static site bundle")
+	pagesWizard := flag.Bool("pages", false, "Launch interactive Pages deployment wizard")
 	flag.Parse()
 
 	// Ensure static export flags are retained even when build tags strip features in some environments.
@@ -91,6 +92,7 @@ func main() {
 	_ = pagesTitle
 	_ = pagesIncludeClosed
 	_ = previewPages
+	_ = pagesWizard
 	_ = labelScope
 
 	envRobot := os.Getenv("BV_ROBOT") == "1"
@@ -483,6 +485,15 @@ func main() {
 				}
 			}
 		}
+	}
+
+	// Handle --pages wizard (bv-10g)
+	if *pagesWizard {
+		if err := runPagesWizard(issues, beadsPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 
 	// Handle --preview-pages (before export since it doesn't need analysis)
@@ -2668,4 +2679,129 @@ func openBrowser(url string) {
 func isCommandAvailable(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+// runPagesWizard runs the interactive deployment wizard (bv-10g).
+func runPagesWizard(issues []model.Issue, beadsPath string) error {
+	wizard := export.NewWizard(beadsPath)
+
+	// Run interactive wizard to collect configuration
+	_, err := wizard.Run()
+	if err != nil {
+		return err
+	}
+
+	config := wizard.GetConfig()
+
+	// Filter issues based on config
+	exportIssues := issues
+	if !config.IncludeClosed {
+		var openIssues []model.Issue
+		for _, issue := range issues {
+			if issue.Status != model.StatusClosed {
+				openIssues = append(openIssues, issue)
+			}
+		}
+		exportIssues = openIssues
+	}
+
+	// Create temp directory for bundle
+	bundlePath := config.OutputPath
+	if bundlePath == "" {
+		tmpDir, err := os.MkdirTemp("", "bv-pages-*")
+		if err != nil {
+			return fmt.Errorf("failed to create temp directory: %w", err)
+		}
+		bundlePath = tmpDir
+	}
+
+	// Ensure output directory exists
+	if err := os.MkdirAll(bundlePath, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Perform export
+	wizard.PerformExport(bundlePath)
+
+	fmt.Println("Exporting static site...")
+	fmt.Printf("  -> Loading %d issues\n", len(exportIssues))
+
+	// Build graph and compute stats
+	fmt.Println("  -> Running graph analysis...")
+	analyzer := analysis.NewAnalyzer(exportIssues)
+	stats := analyzer.AnalyzeAsync()
+	stats.WaitForPhase2()
+
+	// Compute triage
+	fmt.Println("  -> Generating triage data...")
+	triage := analysis.ComputeTriage(exportIssues)
+
+	// Extract dependencies
+	var deps []*model.Dependency
+	for i := range exportIssues {
+		issue := &exportIssues[i]
+		for _, dep := range issue.Dependencies {
+			if dep == nil || !dep.Type.IsBlocking() {
+				continue
+			}
+			deps = append(deps, &model.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: dep.DependsOnID,
+				Type:        dep.Type,
+			})
+		}
+	}
+
+	// Create exporter
+	issuePointers := make([]*model.Issue, len(exportIssues))
+	for i := range exportIssues {
+		issuePointers[i] = &exportIssues[i]
+	}
+	exporter := export.NewSQLiteExporter(issuePointers, deps, stats, &triage)
+	if config.Title != "" {
+		exporter.Config.Title = config.Title
+	}
+
+	// Export SQLite database
+	fmt.Println("  -> Writing database and JSON files...")
+	if err := exporter.Export(bundlePath); err != nil {
+		return fmt.Errorf("export failed: %w", err)
+	}
+
+	// Copy viewer assets
+	fmt.Println("  -> Copying viewer assets...")
+	if err := copyViewerAssets(bundlePath, config.Title); err != nil {
+		return fmt.Errorf("failed to copy assets: %w", err)
+	}
+
+	fmt.Printf("  -> Bundle created: %s\n", bundlePath)
+	fmt.Println("")
+
+	// Offer preview (if deploying to GitHub)
+	if config.DeployTarget == "github" {
+		_, err := wizard.OfferPreview()
+		if err != nil {
+			return err
+		}
+
+		// Perform deployment
+		result, err := wizard.PerformDeploy()
+		if err != nil {
+			return err
+		}
+
+		wizard.PrintSuccess(result)
+	} else {
+		// Local export - just show success
+		result := &export.WizardResult{
+			BundlePath:   bundlePath,
+			DeployTarget: "local",
+		}
+		wizard.PrintSuccess(result)
+	}
+
+	// Save config for next run
+	export.SaveWizardConfig(config)
+
+	return nil
 }
