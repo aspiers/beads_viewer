@@ -201,12 +201,11 @@ func TestPendingFeatureStatus(t *testing.T) {
 	cfg := DefaultAdvancedInsightsConfig()
 	insights := an.GenerateAdvancedInsights(cfg)
 
-	// All features except CycleBreak should be pending (awaiting implementation)
+	// Features that are still pending (awaiting implementation)
 	pendingFeatures := []struct {
 		name   string
 		status FeatureStatus
 	}{
-		{"TopKSet", insights.TopKSet.Status},
 		{"CoverageSet", insights.CoverageSet.Status},
 		{"KPaths", insights.KPaths.Status},
 		{"ParallelCut", insights.ParallelCut.Status},
@@ -225,5 +224,124 @@ func TestPendingFeatureStatus(t *testing.T) {
 	// CycleBreak should be available
 	if insights.CycleBreak.Status.State != "available" {
 		t.Errorf("CycleBreak: expected available state, got %s", insights.CycleBreak.Status.State)
+	}
+
+	// TopKSet should be available (bv-145)
+	if insights.TopKSet.Status.State != "available" {
+		t.Errorf("TopKSet: expected available state, got %s", insights.TopKSet.Status.State)
+	}
+}
+
+func TestTopKSetEmpty(t *testing.T) {
+	an := NewAnalyzer([]model.Issue{})
+	cfg := DefaultAdvancedInsightsConfig()
+	insights := an.GenerateAdvancedInsights(cfg)
+
+	if insights.TopKSet == nil {
+		t.Fatal("expected TopKSet result")
+	}
+	if insights.TopKSet.Status.State != "available" {
+		t.Errorf("expected available state, got %s", insights.TopKSet.Status.State)
+	}
+	if len(insights.TopKSet.Items) != 0 {
+		t.Error("expected no items for empty graph")
+	}
+	if insights.TopKSet.TotalGain != 0 {
+		t.Errorf("expected 0 total gain, got %d", insights.TopKSet.TotalGain)
+	}
+}
+
+func TestTopKSetLinearChain(t *testing.T) {
+	// A -> B -> C -> D: completing A unblocks B, completing B unblocks C, etc.
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusOpen},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "A", Type: model.DepBlocks}}},
+		{ID: "C", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "B", Type: model.DepBlocks}}},
+		{ID: "D", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "C", Type: model.DepBlocks}}},
+	}
+
+	an := NewAnalyzer(issues)
+	cfg := DefaultAdvancedInsightsConfig()
+	cfg.TopKSetLimit = 2
+	insights := an.GenerateAdvancedInsights(cfg)
+
+	if insights.TopKSet == nil {
+		t.Fatal("expected TopKSet result")
+	}
+	if insights.TopKSet.Status.State != "available" {
+		t.Errorf("expected available state, got %s", insights.TopKSet.Status.State)
+	}
+	// First pick should be A (unblocks B)
+	if len(insights.TopKSet.Items) < 1 {
+		t.Fatal("expected at least 1 item")
+	}
+	if insights.TopKSet.Items[0].ID != "A" {
+		t.Errorf("first pick should be A, got %s", insights.TopKSet.Items[0].ID)
+	}
+	if insights.TopKSet.Items[0].MarginalGain != 1 {
+		t.Errorf("A should unblock 1 (B), got %d", insights.TopKSet.Items[0].MarginalGain)
+	}
+	// Second pick should be B (unblocks C)
+	if len(insights.TopKSet.Items) < 2 {
+		t.Fatal("expected 2 items")
+	}
+	if insights.TopKSet.Items[1].ID != "B" {
+		t.Errorf("second pick should be B, got %s", insights.TopKSet.Items[1].ID)
+	}
+}
+
+func TestTopKSetDeterministic(t *testing.T) {
+	issues := []model.Issue{
+		{ID: "Hub", Status: model.StatusOpen},
+		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+	}
+
+	cfg := DefaultAdvancedInsightsConfig()
+	var firstResult *TopKSetResult
+
+	for i := 0; i < 5; i++ {
+		an := NewAnalyzer(issues)
+		insights := an.GenerateAdvancedInsights(cfg)
+
+		if firstResult == nil {
+			firstResult = insights.TopKSet
+			continue
+		}
+
+		// Compare with first result
+		if len(insights.TopKSet.Items) != len(firstResult.Items) {
+			t.Fatalf("iteration %d: item count changed", i)
+		}
+		for j, item := range insights.TopKSet.Items {
+			if item.ID != firstResult.Items[j].ID {
+				t.Errorf("iteration %d: item %d ID changed from %s to %s", i, j, firstResult.Items[j].ID, item.ID)
+			}
+		}
+	}
+}
+
+func TestTopKSetCapping(t *testing.T) {
+	// Create more items than the cap
+	issues := []model.Issue{
+		{ID: "Hub", Status: model.StatusOpen},
+		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+		{ID: "C", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+		{ID: "D", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+		{ID: "E", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+		{ID: "F", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "Hub", Type: model.DepBlocks}}},
+	}
+
+	an := NewAnalyzer(issues)
+	cfg := DefaultAdvancedInsightsConfig()
+	cfg.TopKSetLimit = 3
+	insights := an.GenerateAdvancedInsights(cfg)
+
+	if len(insights.TopKSet.Items) > 3 {
+		t.Errorf("expected at most 3 items (capped), got %d", len(insights.TopKSet.Items))
+	}
+	if !insights.TopKSet.Status.Capped {
+		t.Error("expected Capped=true when results exceed limit")
 	}
 }

@@ -2,6 +2,8 @@ package analysis
 
 import (
 	"sort"
+
+	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 )
 
 // AdvancedInsightsConfig holds caps and limits for advanced analysis features.
@@ -190,14 +192,8 @@ func (a *Analyzer) GenerateAdvancedInsights(config AdvancedInsightsConfig) *Adva
 		UsageHints: DefaultUsageHints(),
 	}
 
-	// TopK Set - placeholder until bv-145 implements
-	insights.TopKSet = &TopKSetResult{
-		Status: FeatureStatus{
-			State:  "pending",
-			Reason: "Awaiting implementation (bv-145)",
-		},
-		HowToUse: DefaultUsageHints()["topk_set"],
-	}
+	// TopK Set - greedy submodular selection for maximum unlock (bv-145)
+	insights.TopKSet = a.generateTopKSet(config.TopKSetLimit)
 
 	// Coverage Set - placeholder until bv-152 implements
 	insights.CoverageSet = &CoverageSetResult{
@@ -344,4 +340,144 @@ func (a *Analyzer) countDependents(issueID string) int {
 		count++
 	}
 	return count
+}
+
+// generateTopKSet implements greedy submodular selection to find the best k issues
+// that maximize downstream unlocks when completed together (bv-145).
+func (a *Analyzer) generateTopKSet(k int) *TopKSetResult {
+	if k <= 0 {
+		k = 5 // default
+	}
+
+	// Get actionable (non-closed) issues as candidates
+	var candidates []string
+	for id, issue := range a.issueMap {
+		if issue.Status != model.StatusClosed {
+			candidates = append(candidates, id)
+		}
+	}
+	sort.Strings(candidates) // deterministic ordering
+
+	if len(candidates) == 0 {
+		return &TopKSetResult{
+			Status: FeatureStatus{
+				State:  "available",
+				Count:  0,
+				Reason: "No actionable issues",
+			},
+			HowToUse: DefaultUsageHints()["topk_set"],
+		}
+	}
+
+	// Track which issues we've "completed" in our greedy selection
+	completed := make(map[string]bool)
+	var items []TopKSetItem
+	var marginalGains []int
+	totalGain := 0
+
+	// Greedy selection: pick k items with highest marginal gain
+	for i := 0; i < k && len(candidates) > 0; i++ {
+		bestID := ""
+		bestGain := -1
+		var bestUnblocks []string
+
+		// Evaluate each remaining candidate
+		for _, candID := range candidates {
+			if completed[candID] {
+				continue
+			}
+			unblocks := a.computeMarginalUnblocks(candID, completed)
+			gain := len(unblocks)
+			// Tie-break by ID for determinism
+			if gain > bestGain || (gain == bestGain && (bestID == "" || candID < bestID)) {
+				bestID = candID
+				bestGain = gain
+				bestUnblocks = unblocks
+			}
+		}
+
+		if bestID == "" {
+			break // no more candidates
+		}
+
+		// Select this candidate
+		completed[bestID] = true
+		title := ""
+		if issue, exists := a.issueMap[bestID]; exists {
+			title = issue.Title
+		}
+		items = append(items, TopKSetItem{
+			ID:           bestID,
+			Title:        title,
+			MarginalGain: bestGain,
+			Unblocks:     bestUnblocks,
+		})
+		marginalGains = append(marginalGains, bestGain)
+		totalGain += bestGain
+	}
+
+	return &TopKSetResult{
+		Status: FeatureStatus{
+			State:   "available",
+			Count:   len(items),
+			Capped:  len(items) >= k && len(candidates) > k,
+			Limited: len(candidates),
+		},
+		Items:        items,
+		TotalGain:    totalGain,
+		MarginalGain: marginalGains,
+		HowToUse:     DefaultUsageHints()["topk_set"],
+	}
+}
+
+// computeMarginalUnblocks computes which issues would become actionable if we complete
+// the given issue, assuming the issues in 'alreadyCompleted' are also done.
+func (a *Analyzer) computeMarginalUnblocks(issueID string, alreadyCompleted map[string]bool) []string {
+	var unblocks []string
+
+	for _, issue := range a.issueMap {
+		// Skip closed issues
+		if issue.Status == model.StatusClosed {
+			continue
+		}
+		// Skip if already "completed" in our simulation
+		if alreadyCompleted[issue.ID] {
+			continue
+		}
+		// Skip if this is the candidate itself
+		if issue.ID == issueID {
+			continue
+		}
+
+		// Check if this issue would become unblocked
+		wouldBeBlocked := false
+		hasThisBlocker := false
+
+		for _, dep := range issue.Dependencies {
+			if dep.Type != model.DepBlocks {
+				continue
+			}
+
+			if dep.DependsOnID == issueID {
+				hasThisBlocker = true
+				continue
+			}
+
+			// Check if there's another open blocker (not already completed)
+			if blocker, exists := a.issueMap[dep.DependsOnID]; exists {
+				if blocker.Status != model.StatusClosed && !alreadyCompleted[dep.DependsOnID] {
+					wouldBeBlocked = true
+					break
+				}
+			}
+		}
+
+		// If this issue depends on issueID and would become unblocked
+		if hasThisBlocker && !wouldBeBlocked {
+			unblocks = append(unblocks, issue.ID)
+		}
+	}
+
+	sort.Strings(unblocks)
+	return unblocks
 }
