@@ -227,6 +227,31 @@ type labelCount struct {
 	Count int
 }
 
+// getCrossFlowsForLabel returns outgoing cross-label dependency counts for a label
+func (m Model) getCrossFlowsForLabel(label string) []labelCount {
+	cfg := analysis.DefaultLabelHealthConfig()
+	flow := analysis.ComputeCrossLabelFlow(m.issues, cfg)
+	counts := make(map[string]int)
+
+	for _, dep := range flow.Dependencies {
+		if dep.FromLabel == label {
+			counts[dep.ToLabel] += dep.IssueCount
+		}
+	}
+
+	var out []labelCount
+	for lbl, c := range counts {
+		out = append(out, labelCount{Label: lbl, Count: c})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count == out[j].Count {
+			return out[i].Label < out[j].Label
+		}
+		return out[i].Count > out[j].Count
+	})
+	return out
+}
+
 // WorkspaceInfo contains workspace loading metadata for TUI display
 type WorkspaceInfo struct {
 	Enabled      bool
@@ -1974,27 +1999,20 @@ func (m Model) renderLabelHealthDetail(lh analysis.LabelHealth) string {
 	sb.WriteString(bar(lh.Flow.FlowScore))
 	sb.WriteString("\n\n")
 
-	sb.WriteString(labelStyle.Render("Criticality: "))
-	sb.WriteString(valStyle.Render(fmt.Sprintf("%d/100 (avgPR=%.3f, maxBW=%.3f, crit_path=%d, bottlenecks=%d)", lh.Criticality.CriticalityScore, lh.Criticality.AvgPageRank, lh.Criticality.MaxBetweenness, lh.Criticality.CriticalPathCount, lh.Criticality.BottleneckCount)))
-	sb.WriteString("\n")
-	sb.WriteString(bar(lh.Criticality.CriticalityScore))
-	sb.WriteString("\n\n")
-
-	sb.WriteString(labelStyle.Render("Blocked issues: "))
-	sb.WriteString(valStyle.Render(fmt.Sprintf("%d", lh.Blocked)))
-	sb.WriteString("\n\n")
-
+	// Cross-Label Flow Table (outgoing dependencies)
 	if len(m.labelHealthDetailFlows) > 0 {
-		sb.WriteString(labelStyle.Render("Outgoing label deps (count): "))
-		var parts []string
-		for _, lc := range m.labelHealthDetailFlows {
-			parts = append(parts, fmt.Sprintf("%s:%d", lc.Label, lc.Count))
+		sb.WriteString(labelStyle.Render("Blocking other labels:"))
+		sb.WriteString("\n")
+		// Simple ASCII table for flows
+		for _, flow := range m.labelHealthDetailFlows {
+			line := fmt.Sprintf("  %-20s %d issues", flow.Label, flow.Count)
+			sb.WriteString(valStyle.Render(line))
+			sb.WriteString("\n")
 		}
-		sb.WriteString(valStyle.Render(strings.Join(parts, ", ")))
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(t.Renderer.NewStyle().Foreground(t.Subtext).Render("esc/q/enter to close; enter on table selects label"))
+	sb.WriteString(t.Renderer.NewStyle().Foreground(t.Secondary).Italic(true).Render("Press Esc to close"))
 
 	content := boxStyle.Render(sb.String())
 
@@ -2038,7 +2056,7 @@ func (m *Model) renderFooter() string {
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// FILTER BADGE - Current view/filter state
+	// FILTER BADGE - Current view/filter state + quick hint for label dashboard
 	// ─────────────────────────────────────────────────────────────────────────
 	var filterTxt string
 	var filterIcon string
