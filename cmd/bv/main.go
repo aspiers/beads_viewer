@@ -41,11 +41,15 @@ func main() {
 	robotNext := flag.Bool("robot-next", false, "Output only the top pick recommendation as JSON (minimal triage)")
 	robotDiff := flag.Bool("robot-diff", false, "Output diff as JSON (use with --diff-since)")
 	robotRecipes := flag.Bool("robot-recipes", false, "Output available recipes as JSON for AI agents")
+	robotAlerts := flag.Bool("robot-alerts", false, "Output alerts (drift + proactive) as JSON for AI agents")
 	// Robot output filters (bv-84)
 	robotMinConf := flag.Float64("robot-min-confidence", 0.0, "Filter robot outputs by minimum confidence (0.0-1.0)")
 	robotMaxResults := flag.Int("robot-max-results", 0, "Limit robot output count (0 = use defaults)")
 	robotByLabel := flag.String("robot-by-label", "", "Filter robot outputs by label (exact match)")
 	robotByAssignee := flag.String("robot-by-assignee", "", "Filter robot outputs by assignee (exact match)")
+	alertSeverity := flag.String("severity", "", "Filter robot alerts by severity (info|warning|critical)")
+	alertType := flag.String("alert-type", "", "Filter robot alerts by alert type (e.g., stale_issue)")
+	alertLabel := flag.String("alert-label", "", "Filter robot alerts by label match")
 	recipeName := flag.String("recipe", "", "Apply named recipe (e.g., triage, actionable, high-impact)")
 	recipeShort := flag.String("r", "", "Shorthand for --recipe")
 	diffSince := flag.String("diff-since", "", "Show changes since historical point (commit SHA, branch, tag, or date)")
@@ -187,6 +191,11 @@ func main() {
 		fmt.Println("      Lists all available recipes as JSON.")
 		fmt.Println("      Output: {recipes: [{name, description, source}]}")
 		fmt.Println("      Sources: 'builtin', 'user' (~/.config/bv/recipes.yaml), 'project' (.bv/recipes.yaml)")
+		fmt.Println("")
+		fmt.Println("  --robot-alerts")
+		fmt.Println("      Outputs drift + proactive alerts as JSON (staleness, cascades, density, cycles).")
+		fmt.Println("      Filters: --severity=<info|warning|critical>, --alert-type=<type>, --alert-label=<label>")
+		fmt.Println("      Fields: type, severity, message, issue_id, label, detected_at, details[].")
 		fmt.Println("")
 		fmt.Println("  --robot-insights")
 		fmt.Println("      Graph metrics JSON for agents.")
@@ -380,6 +389,113 @@ func main() {
 
 	// Stable data hash for robot outputs (after repo filter but before recipes/TUI)
 	dataHash := analysis.ComputeDataHash(issues)
+
+	// Handle --robot-alerts (drift + proactive)
+	if *robotAlerts {
+		projectDir, _ := os.Getwd()
+		driftConfig, err := drift.LoadConfig(projectDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading drift config: %v\n", err)
+			os.Exit(1)
+		}
+
+		analyzer := analysis.NewAnalyzer(issues)
+		stats := analyzer.Analyze()
+
+		openCount, closedCount, blockedCount := 0, 0, 0
+		for _, issue := range issues {
+			switch issue.Status {
+			case model.StatusClosed:
+				closedCount++
+			case model.StatusBlocked:
+				blockedCount++
+			default:
+				openCount++
+			}
+		}
+		curStats := baseline.GraphStats{
+			NodeCount:       stats.NodeCount,
+			EdgeCount:       stats.EdgeCount,
+			Density:         stats.Density,
+			OpenCount:       openCount,
+			ClosedCount:     closedCount,
+			BlockedCount:    blockedCount,
+			CycleCount:      len(stats.Cycles()),
+			ActionableCount: len(analyzer.GetActionableIssues()),
+		}
+		bl := &baseline.Baseline{Stats: curStats}
+		cur := &baseline.Baseline{Stats: curStats, Cycles: stats.Cycles()}
+
+		calc := drift.NewCalculator(bl, cur, driftConfig)
+		calc.SetIssues(issues)
+		driftResult := calc.Calculate()
+
+		// Apply optional filters
+		filtered := driftResult.Alerts[:0]
+		for _, a := range driftResult.Alerts {
+			if *alertSeverity != "" && string(a.Severity) != *alertSeverity {
+				continue
+			}
+			if *alertType != "" && string(a.Type) != *alertType {
+				continue
+			}
+			if *alertLabel != "" {
+				found := false
+				for _, d := range a.Details {
+					if strings.Contains(strings.ToLower(d), strings.ToLower(*alertLabel)) {
+						found = true
+						break
+					}
+				}
+				if !found && a.Label != "" && !strings.Contains(strings.ToLower(a.Label), strings.ToLower(*alertLabel)) {
+					continue
+				}
+			}
+			filtered = append(filtered, a)
+		}
+		driftResult.Alerts = filtered
+
+		output := struct {
+			GeneratedAt string        `json:"generated_at"`
+			DataHash    string        `json:"data_hash"`
+			Alerts      []drift.Alert `json:"alerts"`
+			Summary     struct {
+				Total    int `json:"total"`
+				Critical int `json:"critical"`
+				Warning  int `json:"warning"`
+				Info     int `json:"info"`
+			} `json:"summary"`
+			UsageHints []string `json:"usage_hints"`
+		}{
+			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+			DataHash:    dataHash,
+			Alerts:      driftResult.Alerts,
+			UsageHints: []string{
+				"--severity=warning --alert-type=stale_issue   # stale warnings only",
+				"--alert-type=blocking_cascade                 # high-unblock opportunities",
+				"jq '.alerts | map(.issue_id)'                # list impacted issues",
+			},
+		}
+		for _, a := range driftResult.Alerts {
+			switch a.Severity {
+			case drift.SeverityCritical:
+				output.Summary.Critical++
+			case drift.SeverityWarning:
+				output.Summary.Warning++
+			case drift.SeverityInfo:
+				output.Summary.Info++
+			}
+			output.Summary.Total++
+		}
+
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(output); err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding alerts: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	// Handle --profile-startup
 	if *profileStartup {
@@ -674,15 +790,15 @@ func main() {
 		advancedInsights := analyzer.GenerateAdvancedInsights(analysis.DefaultAdvancedInsightsConfig())
 
 		output := struct {
-			GeneratedAt      string                    `json:"generated_at"`
-			DataHash         string                    `json:"data_hash"`
-			AnalysisConfig   analysis.AnalysisConfig   `json:"analysis_config"`
-			Status           analysis.MetricStatus     `json:"status"`
+			GeneratedAt    string                  `json:"generated_at"`
+			DataHash       string                  `json:"data_hash"`
+			AnalysisConfig analysis.AnalysisConfig `json:"analysis_config"`
+			Status         analysis.MetricStatus   `json:"status"`
 			analysis.Insights
-			FullStats        interface{}               `json:"full_stats"`
-			TopWhatIfs       []analysis.WhatIfEntry    `json:"top_what_ifs,omitempty"`       // Issues with highest downstream impact (bv-83)
+			FullStats        interface{}                `json:"full_stats"`
+			TopWhatIfs       []analysis.WhatIfEntry     `json:"top_what_ifs,omitempty"`      // Issues with highest downstream impact (bv-83)
 			AdvancedInsights *analysis.AdvancedInsights `json:"advanced_insights,omitempty"` // bv-181: Canonical advanced features
-			UsageHints       []string                  `json:"usage_hints"`                  // bv-84: Agent-friendly hints
+			UsageHints       []string                   `json:"usage_hints"`                 // bv-84: Agent-friendly hints
 		}{
 			GeneratedAt:      time.Now().UTC().Format(time.RFC3339),
 			DataHash:         dataHash,

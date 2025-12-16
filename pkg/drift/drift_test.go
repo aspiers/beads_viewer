@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Dicklesworthstone/beads_viewer/pkg/baseline"
+	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 	"gopkg.in/yaml.v3"
 )
 
@@ -176,6 +177,79 @@ func TestCalculatorPageRankChange(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected pagerank_change alert")
+	}
+}
+
+func TestCalculatorStalenessWarningAndCritical(t *testing.T) {
+	now := time.Now().UTC()
+	issues := []model.Issue{
+		{ID: "OLD-WARN", Status: model.StatusOpen, UpdatedAt: now.Add(-16 * 24 * time.Hour)},
+		{ID: "OLD-CRIT", Status: model.StatusOpen, UpdatedAt: now.Add(-35 * 24 * time.Hour)},
+		{ID: "INPROG", Status: model.StatusInProgress, UpdatedAt: now.Add(-8 * 24 * time.Hour)},
+	}
+
+	bl := &baseline.Baseline{Stats: baseline.GraphStats{}}
+	current := &baseline.Baseline{Stats: baseline.GraphStats{}}
+	calc := NewCalculator(bl, current, nil)
+	calc.SetIssues(issues)
+
+	result := calc.Calculate()
+
+	var warnCount, critCount int
+	for _, a := range result.Alerts {
+		if a.Type != AlertStaleIssue {
+			continue
+		}
+		if a.Severity == SeverityWarning {
+			warnCount++
+		}
+		if a.Severity == SeverityCritical {
+			critCount++
+		}
+	}
+
+	if warnCount != 2 { // OLD-WARN + INPROG (in_progress threshold tightened)
+		t.Fatalf("expected 2 warning staleness alerts, got %d", warnCount)
+	}
+	if critCount != 1 {
+		t.Fatalf("expected 1 critical staleness alert, got %d", critCount)
+	}
+}
+
+func TestCalculatorBlockingCascade(t *testing.T) {
+	issues := []model.Issue{
+		{ID: "A", Title: "Blocker A", Status: model.StatusOpen},
+		{ID: "B", Title: "Blocked by A", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "A", Type: model.DepBlocks}}},
+		{ID: "C", Title: "Also blocked by A", Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "A", Type: model.DepBlocks}}},
+		{ID: "D", Title: "Independent", Status: model.StatusOpen},
+	}
+	bl := &baseline.Baseline{Stats: baseline.GraphStats{}}
+	current := &baseline.Baseline{Stats: baseline.GraphStats{}}
+	cfg := DefaultConfig()
+	cfg.BlockingCascadeInfo = 2
+	cfg.BlockingCascadeWarning = 3
+
+	calc := NewCalculator(bl, current, cfg)
+	calc.SetIssues(issues)
+
+	result := calc.Calculate()
+
+	var cascade Alert
+	found := false
+	for _, a := range result.Alerts {
+		if a.Type == AlertBlockingCascade && a.IssueID == "A" {
+			found = true
+			cascade = a
+		}
+	}
+	if !found {
+		t.Fatalf("expected blocking cascade alert for A")
+	}
+	if cascade.Severity != SeverityInfo {
+		t.Fatalf("expected info severity, got %s", cascade.Severity)
+	}
+	if len(cascade.Details) != 2 {
+		t.Fatalf("expected 2 downstream ids, got %d", len(cascade.Details))
 	}
 }
 

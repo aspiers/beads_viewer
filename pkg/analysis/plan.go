@@ -124,6 +124,11 @@ func (a *Analyzer) computeUnblocks(issueID string) []string {
 	return unblocks
 }
 
+// ComputeUnblocks is an exported wrapper for computeUnblocks for consumers outside analysis.
+func (a *Analyzer) ComputeUnblocks(issueID string) []string {
+	return a.computeUnblocks(issueID)
+}
+
 // findConnectedComponents uses union-find to group related issues
 func (a *Analyzer) findConnectedComponents() map[string][]string {
 	// Simple union-find

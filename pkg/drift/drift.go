@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Dicklesworthstone/beads_viewer/pkg/analysis"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/baseline"
+	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 )
 
 // Severity represents the severity level of a drift alert
@@ -72,6 +74,7 @@ type Calculator struct {
 	config   *Config
 	baseline *baseline.Baseline
 	current  *baseline.Baseline
+	issues   []model.Issue
 }
 
 // NewCalculator creates a drift calculator with the given baseline and current snapshot
@@ -84,6 +87,12 @@ func NewCalculator(bl *baseline.Baseline, current *baseline.Baseline, cfg *Confi
 		baseline: bl,
 		current:  current,
 	}
+}
+
+// SetIssues attaches the current issue list for issue-level alerts (e.g., staleness).
+// Optional: drift detection still works without issues attached.
+func (c *Calculator) SetIssues(issues []model.Issue) {
+	c.issues = issues
 }
 
 // Calculate performs drift detection and returns results
@@ -109,6 +118,12 @@ func (c *Calculator) Calculate() *Result {
 
 	// Check PageRank changes (warning)
 	c.checkPageRankChanges(result)
+
+	// Check staleness (uses current issues if provided)
+	c.checkStaleness(result)
+
+	// Check blocking cascades (uses current issues if provided)
+	c.checkBlockingCascade(result)
 
 	// Compute summary
 	for _, alert := range result.Alerts {
@@ -331,6 +346,92 @@ func (c *Calculator) checkPageRankChanges(result *Result) {
 			Message:    fmt.Sprintf("%d PageRank changes detected", len(changes)),
 			Details:    changes,
 			DetectedAt: time.Now().UTC(),
+		})
+	}
+}
+
+// checkStaleness emits alerts for issues that have been inactive beyond thresholds.
+// Relies on attached issues; no-op if issues were not provided.
+func (c *Calculator) checkStaleness(result *Result) {
+	if len(c.issues) == 0 {
+		return
+	}
+	now := time.Now().UTC()
+	for _, issue := range c.issues {
+		if issue.Status == model.StatusClosed || issue.UpdatedAt.IsZero() {
+			continue
+		}
+		warn := float64(c.config.StaleWarningDays)
+		crit := float64(c.config.StaleCriticalDays)
+		// Tighten thresholds for in-progress items
+		if issue.Status == model.StatusInProgress && c.config.InProgressStaleMultiplier > 0 {
+			warn *= c.config.InProgressStaleMultiplier
+			crit *= c.config.InProgressStaleMultiplier
+		}
+
+		days := now.Sub(issue.UpdatedAt).Hours() / 24.0
+		severity := Severity("")
+		if days >= crit {
+			severity = SeverityCritical
+		} else if days >= warn {
+			severity = SeverityWarning
+		}
+		if severity == "" {
+			continue
+		}
+
+		result.Alerts = append(result.Alerts, Alert{
+			Type:       AlertStaleIssue,
+			Severity:   severity,
+			Message:    fmt.Sprintf("Issue %s inactive for %.0f days", issue.ID, days),
+			IssueID:    issue.ID,
+			DetectedAt: now,
+			Details: []string{
+				fmt.Sprintf("status=%s", issue.Status),
+				fmt.Sprintf("last_update=%s", issue.UpdatedAt.Format(time.RFC3339)),
+			},
+		})
+	}
+}
+
+// checkBlockingCascade raises alerts for issues whose completion would unblock many dependents.
+// Uses existing dependency graph; no alert if issues not provided.
+func (c *Calculator) checkBlockingCascade(result *Result) {
+	if len(c.issues) == 0 {
+		return
+	}
+	infoThresh := c.config.BlockingCascadeInfo
+	warnThresh := c.config.BlockingCascadeWarning
+	if infoThresh <= 0 && warnThresh <= 0 {
+		return
+	}
+
+	analyzer := analysis.NewAnalyzer(c.issues)
+	actionable := analyzer.GetActionableIssues()
+	if len(actionable) == 0 {
+		return
+	}
+
+	for _, iss := range actionable {
+		unblocks := analyzer.ComputeUnblocks(iss.ID)
+		count := len(unblocks)
+		if count == 0 {
+			continue
+		}
+		severity := SeverityInfo
+		if warnThresh > 0 && count >= warnThresh {
+			severity = SeverityWarning
+		} else if infoThresh > 0 && count < infoThresh {
+			continue
+		}
+
+		result.Alerts = append(result.Alerts, Alert{
+			Type:       AlertBlockingCascade,
+			Severity:   severity,
+			Message:    fmt.Sprintf("Completing %s unblocks %d downstream item(s)", iss.ID, count),
+			IssueID:    iss.ID,
+			DetectedAt: time.Now().UTC(),
+			Details:    unblocks,
 		})
 	}
 }

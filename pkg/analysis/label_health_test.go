@@ -1,7 +1,9 @@
 package analysis
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 )
@@ -192,10 +194,10 @@ func TestCrossLabelFlowTypes(t *testing.T) {
 	}
 
 	flow := CrossLabelFlow{
-		Labels:             []string{"api", "ui", "core"},
-		FlowMatrix:         [][]int{{0, 3, 1}, {0, 0, 2}, {0, 0, 0}},
-		Dependencies:       []LabelDependency{dep},
-		BottleneckLabels:   []string{"api"},
+		Labels:              []string{"api", "ui", "core"},
+		FlowMatrix:          [][]int{{0, 3, 1}, {0, 0, 2}, {0, 0, 0}},
+		Dependencies:        []LabelDependency{dep},
+		BottleneckLabels:    []string{"api"},
 		TotalCrossLabelDeps: 6,
 	}
 
@@ -206,6 +208,60 @@ func TestCrossLabelFlowTypes(t *testing.T) {
 	if flow.TotalCrossLabelDeps != 6 {
 		t.Errorf("Expected 6 cross-label deps, got %d", flow.TotalCrossLabelDeps)
 	}
+}
+
+func TestComputeCrossLabelFlow(t *testing.T) {
+	now := time.Now().UTC()
+	cfg := DefaultLabelHealthConfig()
+	issues := []model.Issue{
+		{ID: "A", Labels: []string{"api"}, Status: model.StatusOpen},
+		{ID: "B", Labels: []string{"ui"}, Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "A", Type: model.DepBlocks}}},
+		{ID: "C", Labels: []string{"api", "core"}, Status: model.StatusOpen},
+		{ID: "D", Labels: []string{"ui", "core"}, Status: model.StatusOpen, Dependencies: []*model.Dependency{{DependsOnID: "C", Type: model.DepBlocks}}},
+		{ID: "E", Labels: []string{"api"}, Status: model.StatusClosed, Dependencies: []*model.Dependency{{DependsOnID: "A", Type: model.DepBlocks}}},
+	}
+
+	flow := ComputeCrossLabelFlow(issues, cfg)
+
+	if flow.TotalCrossLabelDeps != 4 { // A->B (api->ui) plus C->D cross-product (api->ui, api->core, core->ui)
+		t.Fatalf("expected 4 cross-label deps, got %d", flow.TotalCrossLabelDeps)
+	}
+
+	if len(flow.Labels) == 0 || flow.FlowMatrix == nil {
+		t.Fatalf("expected labels and flow matrix to be populated")
+	}
+
+	// Ensure bottlenecks include api (highest outgoing)
+	foundAPI := false
+	for _, l := range flow.BottleneckLabels {
+		if l == "api" {
+			foundAPI = true
+			break
+		}
+	}
+	if !foundAPI {
+		t.Fatalf("expected api in bottleneck labels")
+	}
+
+	// Ensure closed issue E is ignored in flow counts
+	apiIdx := -1
+	uiIdx := -1
+	for i, l := range flow.Labels {
+		if l == "api" {
+			apiIdx = i
+		}
+		if l == "ui" {
+			uiIdx = i
+		}
+	}
+	if apiIdx == -1 || uiIdx == -1 {
+		t.Fatalf("missing api/ui labels in flow")
+	}
+	if flow.FlowMatrix[apiIdx][uiIdx] != 2 { // A->B and C->D (api part) count
+		t.Fatalf("expected api->ui count 2, got %d", flow.FlowMatrix[apiIdx][uiIdx])
+	}
+
+	_ = now // suppress unused if future additions use time
 }
 
 func TestLabelPath(t *testing.T) {
@@ -426,8 +482,8 @@ func TestGetCommonLabels(t *testing.T) {
 
 func TestGetLabelCooccurrence(t *testing.T) {
 	issues := []model.Issue{
-		{ID: "bv-1", Labels: []string{"api", "bug"}},    // api+bug
-		{ID: "bv-2", Labels: []string{"api", "bug"}},    // api+bug again
+		{ID: "bv-1", Labels: []string{"api", "bug"}},     // api+bug
+		{ID: "bv-2", Labels: []string{"api", "bug"}},     // api+bug again
 		{ID: "bv-3", Labels: []string{"api", "feature"}}, // api+feature
 		{ID: "bv-4", Labels: []string{"ui"}},             // single label, no co-occurrence
 	}
@@ -469,5 +525,269 @@ func TestSortLabelsByCount(t *testing.T) {
 		if sorted[i] != label {
 			t.Errorf("Position %d: expected %s, got %s", i, label, sorted[i])
 		}
+	}
+}
+
+// ============================================================================
+// Velocity Metrics Tests (bv-102)
+// ============================================================================
+
+func TestComputeVelocityMetricsEmpty(t *testing.T) {
+	now := time.Now()
+	v := ComputeVelocityMetrics([]model.Issue{}, now)
+
+	if v.ClosedLast7Days != 0 {
+		t.Errorf("Expected 0 closed last 7 days, got %d", v.ClosedLast7Days)
+	}
+	if v.ClosedLast30Days != 0 {
+		t.Errorf("Expected 0 closed last 30 days, got %d", v.ClosedLast30Days)
+	}
+	if v.AvgDaysToClose != 0 {
+		t.Errorf("Expected 0 avg days to close, got %f", v.AvgDaysToClose)
+	}
+	if v.TrendDirection != "stable" {
+		t.Errorf("Expected stable trend, got %s", v.TrendDirection)
+	}
+	if v.VelocityScore != 0 {
+		t.Errorf("Expected velocity score 0, got %d", v.VelocityScore)
+	}
+}
+
+func TestComputeVelocityMetricsWithClosures(t *testing.T) {
+	now := time.Now()
+	threeDaysAgo := now.Add(-3 * 24 * time.Hour)
+	tenDaysAgo := now.Add(-10 * 24 * time.Hour)
+	twentyDaysAgo := now.Add(-20 * 24 * time.Hour)
+
+	issues := []model.Issue{
+		{ID: "1", CreatedAt: twentyDaysAgo, ClosedAt: &threeDaysAgo, Status: model.StatusClosed},  // Closed 3 days ago
+		{ID: "2", CreatedAt: twentyDaysAgo, ClosedAt: &tenDaysAgo, Status: model.StatusClosed},    // Closed 10 days ago
+		{ID: "3", CreatedAt: twentyDaysAgo, ClosedAt: &twentyDaysAgo, Status: model.StatusClosed}, // Closed 20 days ago
+		{ID: "4", Status: model.StatusOpen}, // Open, no closure
+	}
+
+	v := ComputeVelocityMetrics(issues, now)
+
+	// 1 closed in last 7 days
+	if v.ClosedLast7Days != 1 {
+		t.Errorf("Expected 1 closed last 7 days, got %d", v.ClosedLast7Days)
+	}
+
+	// 3 closed in last 30 days
+	if v.ClosedLast30Days != 3 {
+		t.Errorf("Expected 3 closed last 30 days, got %d", v.ClosedLast30Days)
+	}
+
+	// Velocity score should be positive
+	if v.VelocityScore <= 0 {
+		t.Errorf("Expected positive velocity score, got %d", v.VelocityScore)
+	}
+}
+
+func TestComputeVelocityMetricsTrendImproving(t *testing.T) {
+	now := time.Now()
+	// Current week: 5 closures
+	// Previous week: 2 closures
+	// Should show improving trend
+
+	var issues []model.Issue
+	// 5 closures in current week (days 1-6)
+	for i := 1; i <= 5; i++ {
+		closedAt := now.Add(time.Duration(-i) * 24 * time.Hour)
+		issues = append(issues, model.Issue{
+			ID:        fmt.Sprintf("cur-%d", i),
+			CreatedAt: now.Add(-30 * 24 * time.Hour),
+			ClosedAt:  &closedAt,
+			Status:    model.StatusClosed,
+		})
+	}
+	// 2 closures in previous week (days 8-10)
+	for i := 8; i <= 9; i++ {
+		closedAt := now.Add(time.Duration(-i) * 24 * time.Hour)
+		issues = append(issues, model.Issue{
+			ID:        fmt.Sprintf("prev-%d", i),
+			CreatedAt: now.Add(-30 * 24 * time.Hour),
+			ClosedAt:  &closedAt,
+			Status:    model.StatusClosed,
+		})
+	}
+
+	v := ComputeVelocityMetrics(issues, now)
+
+	if v.TrendDirection != "improving" {
+		t.Errorf("Expected improving trend (5 vs 2), got %s", v.TrendDirection)
+	}
+	if v.TrendPercent <= 0 {
+		t.Errorf("Expected positive trend percent, got %f", v.TrendPercent)
+	}
+}
+
+func TestComputeVelocityMetricsTrendDeclining(t *testing.T) {
+	now := time.Now()
+	// Current week: 1 closure
+	// Previous week: 5 closures
+	// Should show declining trend
+
+	var issues []model.Issue
+	// 1 closure in current week
+	closedAt := now.Add(-2 * 24 * time.Hour)
+	issues = append(issues, model.Issue{
+		ID:        "cur-1",
+		CreatedAt: now.Add(-30 * 24 * time.Hour),
+		ClosedAt:  &closedAt,
+		Status:    model.StatusClosed,
+	})
+	// 5 closures in previous week
+	for i := 8; i <= 12; i++ {
+		closedAt := now.Add(time.Duration(-i) * 24 * time.Hour)
+		issues = append(issues, model.Issue{
+			ID:        fmt.Sprintf("prev-%d", i),
+			CreatedAt: now.Add(-30 * 24 * time.Hour),
+			ClosedAt:  &closedAt,
+			Status:    model.StatusClosed,
+		})
+	}
+
+	v := ComputeVelocityMetrics(issues, now)
+
+	if v.TrendDirection != "declining" {
+		t.Errorf("Expected declining trend (1 vs 5), got %s", v.TrendDirection)
+	}
+	if v.TrendPercent >= 0 {
+		t.Errorf("Expected negative trend percent, got %f", v.TrendPercent)
+	}
+}
+
+func TestComputeVelocityMetricsAvgDaysToClose(t *testing.T) {
+	now := time.Now()
+	// Create issues with known time to close
+	fiveDaysAgo := now.Add(-5 * 24 * time.Hour)
+	tenDaysAgo := now.Add(-10 * 24 * time.Hour)
+	fifteenDaysAgo := now.Add(-15 * 24 * time.Hour)
+
+	issues := []model.Issue{
+		{ID: "1", CreatedAt: tenDaysAgo, ClosedAt: &fiveDaysAgo, Status: model.StatusClosed},     // 5 days to close
+		{ID: "2", CreatedAt: fifteenDaysAgo, ClosedAt: &fiveDaysAgo, Status: model.StatusClosed}, // 10 days to close
+	}
+
+	v := ComputeVelocityMetrics(issues, now)
+
+	// Average should be (5 + 10) / 2 = 7.5 days
+	expectedAvg := 7.5
+	if v.AvgDaysToClose < expectedAvg-0.1 || v.AvgDaysToClose > expectedAvg+0.1 {
+		t.Errorf("Expected avg days to close ~%.1f, got %.1f", expectedAvg, v.AvgDaysToClose)
+	}
+}
+
+// ============================================================================
+// Freshness Metrics Tests (bv-102)
+// ============================================================================
+
+func TestComputeFreshnessMetricsEmpty(t *testing.T) {
+	now := time.Now()
+	f := ComputeFreshnessMetrics([]model.Issue{}, now, 14)
+
+	if f.StaleCount != 0 {
+		t.Errorf("Expected 0 stale count, got %d", f.StaleCount)
+	}
+	if f.AvgDaysSinceUpdate != 0 {
+		t.Errorf("Expected 0 avg days since update, got %f", f.AvgDaysSinceUpdate)
+	}
+	if f.StaleThresholdDays != 14 {
+		t.Errorf("Expected stale threshold 14, got %d", f.StaleThresholdDays)
+	}
+}
+
+func TestComputeFreshnessMetricsWithUpdates(t *testing.T) {
+	now := time.Now()
+	oneDayAgo := now.Add(-1 * 24 * time.Hour)
+	tenDaysAgo := now.Add(-10 * 24 * time.Hour)
+	twentyDaysAgo := now.Add(-20 * 24 * time.Hour)
+
+	issues := []model.Issue{
+		{ID: "1", UpdatedAt: oneDayAgo, Status: model.StatusOpen},     // Fresh
+		{ID: "2", UpdatedAt: tenDaysAgo, Status: model.StatusOpen},    // Not stale (< 14 days)
+		{ID: "3", UpdatedAt: twentyDaysAgo, Status: model.StatusOpen}, // Stale (> 14 days)
+	}
+
+	f := ComputeFreshnessMetrics(issues, now, 14)
+
+	// 1 stale issue (20 days > 14 days threshold)
+	if f.StaleCount != 1 {
+		t.Errorf("Expected 1 stale issue, got %d", f.StaleCount)
+	}
+
+	// Most recent should be the 1-day-ago update
+	if !f.MostRecentUpdate.Equal(oneDayAgo) {
+		t.Errorf("Expected most recent update %v, got %v", oneDayAgo, f.MostRecentUpdate)
+	}
+
+	// Freshness score should be > 0 (not all stale)
+	if f.FreshnessScore <= 0 {
+		t.Errorf("Expected positive freshness score, got %d", f.FreshnessScore)
+	}
+}
+
+func TestComputeFreshnessMetricsOldestOpen(t *testing.T) {
+	now := time.Now()
+	fiveDaysAgo := now.Add(-5 * 24 * time.Hour)
+	tenDaysAgo := now.Add(-10 * 24 * time.Hour)
+	twentyDaysAgo := now.Add(-20 * 24 * time.Hour)
+
+	issues := []model.Issue{
+		{ID: "1", CreatedAt: fiveDaysAgo, UpdatedAt: fiveDaysAgo, Status: model.StatusOpen},
+		{ID: "2", CreatedAt: twentyDaysAgo, UpdatedAt: tenDaysAgo, Status: model.StatusOpen}, // Oldest open
+		{ID: "3", CreatedAt: tenDaysAgo, UpdatedAt: tenDaysAgo, Status: model.StatusClosed},  // Closed, shouldn't count
+	}
+
+	f := ComputeFreshnessMetrics(issues, now, 14)
+
+	// Oldest open should be the 20-day-old issue
+	if !f.OldestOpenIssue.Equal(twentyDaysAgo) {
+		t.Errorf("Expected oldest open %v, got %v", twentyDaysAgo, f.OldestOpenIssue)
+	}
+}
+
+func TestComputeFreshnessMetricsDefaultThreshold(t *testing.T) {
+	now := time.Now()
+	// Pass 0 or negative threshold - should use default
+	f := ComputeFreshnessMetrics([]model.Issue{}, now, 0)
+
+	if f.StaleThresholdDays != DefaultStaleThresholdDays {
+		t.Errorf("Expected default threshold %d, got %d", DefaultStaleThresholdDays, f.StaleThresholdDays)
+	}
+
+	f = ComputeFreshnessMetrics([]model.Issue{}, now, -5)
+	if f.StaleThresholdDays != DefaultStaleThresholdDays {
+		t.Errorf("Expected default threshold for negative input, got %d", f.StaleThresholdDays)
+	}
+}
+
+func TestComputeFreshnessMetricsScoreCapping(t *testing.T) {
+	now := time.Now()
+	// Very fresh issues should give high score
+	justNow := now.Add(-1 * time.Hour)
+	issues := []model.Issue{
+		{ID: "1", UpdatedAt: justNow, Status: model.StatusOpen},
+	}
+
+	f := ComputeFreshnessMetrics(issues, now, 14)
+
+	// Score should be close to 100 for very fresh
+	if f.FreshnessScore < 90 {
+		t.Errorf("Expected high freshness score for fresh issue, got %d", f.FreshnessScore)
+	}
+
+	// Very stale issues should give low score
+	veryOld := now.Add(-60 * 24 * time.Hour)
+	staleIssues := []model.Issue{
+		{ID: "1", UpdatedAt: veryOld, Status: model.StatusOpen},
+	}
+
+	f = ComputeFreshnessMetrics(staleIssues, now, 14)
+
+	// Score should be 0 for very stale (> 2x threshold)
+	if f.FreshnessScore != 0 {
+		t.Errorf("Expected 0 freshness score for very stale issue, got %d", f.FreshnessScore)
 	}
 }

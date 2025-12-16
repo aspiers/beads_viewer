@@ -19,6 +19,7 @@ type LabelHealth struct {
 	IssueCount  int                `json:"issue_count"`      // Total issues with this label
 	OpenCount   int                `json:"open_count"`       // Open issues with this label
 	ClosedCount int                `json:"closed_count"`     // Closed issues with this label
+	Blocked     int                `json:"blocked_count"`    // Blocked issues with this label
 	Health      int                `json:"health"`           // Composite health score 0-100
 	HealthLevel string             `json:"health_level"`     // "healthy", "warning", "critical"
 	Velocity    VelocityMetrics    `json:"velocity"`         // Work completion rate
@@ -128,6 +129,476 @@ type LabelAnalysisResult struct {
 	AttentionNeeded []string        `json:"attention_needed"`           // Labels requiring attention
 }
 
+// ComputeCrossLabelFlow analyzes blocking dependencies between labels and returns counts.
+// It respects cfg.IncludeClosedInFlow: when false, closed issues are ignored.
+func ComputeCrossLabelFlow(issues []model.Issue, cfg LabelHealthConfig) CrossLabelFlow {
+	labels := ExtractLabels(issues)
+	labelList := make([]string, len(labels.Labels))
+	copy(labelList, labels.Labels)
+	sort.Strings(labelList)
+
+	n := len(labelList)
+	matrix := make([][]int, n)
+	for i := range matrix {
+		matrix[i] = make([]int, n)
+	}
+
+	index := make(map[string]int, n)
+	for i, l := range labelList {
+		index[l] = i
+	}
+
+	// Build issue map for lookup
+	issueMap := make(map[string]model.Issue, len(issues))
+	for _, iss := range issues {
+		issueMap[iss.ID] = iss
+	}
+
+	// Dependency aggregation
+	type pairKey struct{ from, to string }
+	depMap := make(map[pairKey]*LabelDependency)
+	totalDeps := 0
+
+	for _, blocked := range issues {
+		if !cfg.IncludeClosedInFlow && blocked.Status == model.StatusClosed {
+			continue
+		}
+		for _, dep := range blocked.Dependencies {
+			if dep == nil || dep.Type != model.DepBlocks {
+				continue
+			}
+			blocker, ok := issueMap[dep.DependsOnID]
+			if !ok {
+				continue
+			}
+			if !cfg.IncludeClosedInFlow && blocker.Status == model.StatusClosed {
+				continue
+			}
+			// Cross-product of labels
+			for _, from := range blocker.Labels {
+				for _, to := range blocked.Labels {
+					if from == "" || to == "" || from == to {
+						continue // skip empty/self
+					}
+					iFrom, okFrom := index[from]
+					iTo, okTo := index[to]
+					if !okFrom || !okTo {
+						continue
+					}
+					matrix[iFrom][iTo]++
+					totalDeps++
+					key := pairKey{from: from, to: to}
+					entry, exists := depMap[key]
+					if !exists {
+						entry = &LabelDependency{
+							FromLabel: key.from,
+							ToLabel:   key.to,
+							IssueIDs:  []string{},
+						}
+						depMap[key] = entry
+					}
+					entry.IssueCount++
+					entry.IssueIDs = append(entry.IssueIDs, blocked.ID)
+					entry.BlockingPairs = append(entry.BlockingPairs, BlockingPair{
+						BlockerID:    blocker.ID,
+						BlockedID:    blocked.ID,
+						BlockerLabel: from,
+						BlockedLabel: to,
+					})
+				}
+			}
+		}
+	}
+
+	// Build dependency list deterministically
+	var deps []LabelDependency
+	for _, d := range depMap {
+		deps = append(deps, *d)
+	}
+	sort.Slice(deps, func(i, j int) bool {
+		if deps[i].FromLabel != deps[j].FromLabel {
+			return deps[i].FromLabel < deps[j].FromLabel
+		}
+		if deps[i].ToLabel != deps[j].ToLabel {
+			return deps[i].ToLabel < deps[j].ToLabel
+		}
+		return deps[i].IssueCount > deps[j].IssueCount
+	})
+
+	// Bottleneck labels: highest outgoing deps
+	outCounts := make(map[string]int, n)
+	maxOut := 0
+	for i, row := range matrix {
+		sum := 0
+		for _, v := range row {
+			sum += v
+		}
+		outCounts[labelList[i]] = sum
+		if sum > maxOut {
+			maxOut = sum
+		}
+	}
+	var bottlenecks []string
+	for label, c := range outCounts {
+		if c == maxOut && c > 0 {
+			bottlenecks = append(bottlenecks, label)
+		}
+	}
+	sort.Strings(bottlenecks)
+
+	return CrossLabelFlow{
+		Labels:              labelList,
+		FlowMatrix:          matrix,
+		Dependencies:        deps,
+		BottleneckLabels:    bottlenecks,
+		TotalCrossLabelDeps: totalDeps,
+	}
+}
+
+// ComputeVelocityMetrics calculates simple velocity stats for a label.
+// It looks at closed issues and recent closures to give a quick pulse.
+func ComputeVelocityMetrics(issues []model.Issue, now time.Time) VelocityMetrics {
+	const day = 24 * time.Hour
+	var closed7, closed30 int
+	var totalCloseDur time.Duration
+	var closeSamples int
+
+	// Rolling windows
+	weekAgo := now.Add(-7 * day)
+	monthAgo := now.Add(-30 * day)
+	prevWeekStart := now.Add(-14 * day)
+
+	var prevWeek, currentWeek int
+
+	for _, iss := range issues {
+		if iss.ClosedAt == nil {
+			continue
+		}
+		closedAt := *iss.ClosedAt
+		if closedAt.After(weekAgo) {
+			closed7++
+		}
+		if closedAt.After(monthAgo) {
+			closed30++
+		}
+		if closedAt.After(prevWeekStart) && closedAt.Before(weekAgo) {
+			prevWeek++
+		} else if closedAt.After(weekAgo) {
+			currentWeek++
+		}
+		if !iss.CreatedAt.IsZero() {
+			totalCloseDur += closedAt.Sub(iss.CreatedAt)
+			closeSamples++
+		}
+	}
+
+	avgDays := 0.0
+	if closeSamples > 0 {
+		avgDays = totalCloseDur.Hours() / 24.0 / float64(closeSamples)
+	}
+
+	trendPercent := 0.0
+	trendDir := "stable"
+	if prevWeek > 0 {
+		trendPercent = (float64(currentWeek-prevWeek) / float64(prevWeek)) * 100
+		switch {
+		case trendPercent > 10:
+			trendDir = "improving"
+		case trendPercent < -10:
+			trendDir = "declining"
+		}
+	} else if currentWeek > 0 {
+		trendDir = "improving"
+		trendPercent = 100
+	}
+
+	// Simple score: closed in last month scaled plus recency bonus
+	velocityScore := 0
+	if closed30 > 0 {
+		velocityScore = int(minFloat(100, float64(closed30)*10))
+	}
+	// Bonus if trend improving
+	if trendDir == "improving" && velocityScore < 100 {
+		velocityScore = clampScore(velocityScore + 10)
+	}
+
+	return VelocityMetrics{
+		ClosedLast7Days:  closed7,
+		ClosedLast30Days: closed30,
+		AvgDaysToClose:   avgDays,
+		TrendDirection:   trendDir,
+		TrendPercent:     trendPercent,
+		VelocityScore:    velocityScore,
+	}
+}
+
+// ComputeFreshnessMetrics calculates freshness and staleness for a label.
+func ComputeFreshnessMetrics(issues []model.Issue, now time.Time, staleDays int) FreshnessMetrics {
+	if staleDays <= 0 {
+		staleDays = DefaultStaleThresholdDays
+	}
+	var mostRecent time.Time
+	var oldestOpen time.Time
+	var totalStaleness float64
+	var count int
+	staleCount := 0
+	threshold := float64(staleDays)
+
+	for _, iss := range issues {
+		if iss.UpdatedAt.After(mostRecent) {
+			mostRecent = iss.UpdatedAt
+		}
+		if iss.Status != model.StatusClosed {
+			if oldestOpen.IsZero() || iss.CreatedAt.Before(oldestOpen) {
+				oldestOpen = iss.CreatedAt
+			}
+		}
+		if !iss.UpdatedAt.IsZero() {
+			days := now.Sub(iss.UpdatedAt).Hours() / 24.0
+			totalStaleness += days
+			count++
+			if days >= threshold {
+				staleCount++
+			}
+		}
+	}
+
+	avgStaleness := 0.0
+	if count > 0 {
+		avgStaleness = totalStaleness / float64(count)
+	}
+	// Freshness score: 100 when avg=0, declines linearly to 0 at 2x threshold
+	freshnessScore := int(maxFloat(0, 100-(avgStaleness/(threshold*2))*100))
+
+	return FreshnessMetrics{
+		MostRecentUpdate:   mostRecent,
+		OldestOpenIssue:    oldestOpen,
+		AvgDaysSinceUpdate: avgStaleness,
+		StaleCount:         staleCount,
+		StaleThresholdDays: staleDays,
+		FreshnessScore:     clampScore(freshnessScore),
+	}
+}
+
+// ComputeLabelHealthForLabel computes health for a single label.
+// If stats is nil, it will compute graph stats once for the provided issues.
+func ComputeLabelHealthForLabel(label string, issues []model.Issue, cfg LabelHealthConfig, now time.Time, stats *GraphStats) LabelHealth {
+	health := NewLabelHealth(label)
+	health.Issues = []string{}
+
+	// Collect issues with this label
+	var labeled []model.Issue
+	for _, iss := range issues {
+		for _, l := range iss.Labels {
+			if l == label {
+				labeled = append(labeled, iss)
+				health.Issues = append(health.Issues, iss.ID)
+				break
+			}
+		}
+	}
+
+	health.IssueCount = len(labeled)
+	if health.IssueCount == 0 {
+		health.Health = 0
+		health.HealthLevel = HealthLevelCritical
+		return health
+	}
+
+	// Status counts
+	for _, iss := range labeled {
+		switch iss.Status {
+		case model.StatusClosed:
+			health.ClosedCount++
+		case model.StatusInProgress:
+			health.OpenCount++
+		case model.StatusBlocked:
+			health.Blocked++
+		default:
+			health.OpenCount++
+		}
+	}
+
+	velocity := ComputeVelocityMetrics(labeled, now)
+	freshness := ComputeFreshnessMetrics(labeled, now, cfg.StaleThresholdDays)
+
+	// Flow: count cross-label deps
+	flow := FlowMetrics{}
+	seenIn := make(map[string]struct{})
+	seenOut := make(map[string]struct{})
+	for _, iss := range labeled {
+		for _, dep := range iss.Dependencies {
+			if dep == nil || dep.Type != model.DepBlocks {
+				continue
+			}
+			blockerLabels := GetLabelsForIssue(issues, dep.DependsOnID)
+			targetLabels := iss.Labels
+			// incoming: other label blocks this
+			for _, bl := range blockerLabels {
+				if bl != label {
+					flow.IncomingDeps++
+					seenIn[bl] = struct{}{}
+				}
+			}
+			// outgoing: this label blocks others
+			for _, tl := range targetLabels {
+				if tl == label {
+					continue
+				}
+				flow.OutgoingDeps++
+				seenOut[tl] = struct{}{}
+			}
+		}
+	}
+	for l := range seenIn {
+		flow.IncomingLabels = append(flow.IncomingLabels, l)
+	}
+	for l := range seenOut {
+		flow.OutgoingLabels = append(flow.OutgoingLabels, l)
+	}
+	sort.Strings(flow.IncomingLabels)
+	sort.Strings(flow.OutgoingLabels)
+	flow.FlowScore = clampScore(100 - (flow.IncomingDeps * 5))
+
+	// Criticality: derive from graph metrics (reuse precomputed stats when supplied)
+	if stats == nil {
+		analyzer := NewAnalyzer(issues)
+		s := analyzer.Analyze()
+		stats = &s
+	}
+	pr := stats.PageRank()
+	bw := stats.Betweenness()
+	maxPR := findMax(pr)
+	maxBW := findMax(bw)
+
+	var prSum, bwSum float64
+	maxBwLabel := 0.0
+	var critCount, bottleneckCount int
+	for _, iss := range labeled {
+		prSum += pr[iss.ID]
+		bwVal := bw[iss.ID]
+		bwSum += bwVal
+		if bwVal > maxBwLabel {
+			maxBwLabel = bwVal
+		}
+		if stats.GetCriticalPathScore(iss.ID) > 0 {
+			critCount++
+		}
+		if bwVal > 0 {
+			bottleneckCount++
+		}
+	}
+	avgPR := 0.0
+	avgBW := 0.0
+	if health.IssueCount > 0 {
+		avgPR = prSum / float64(health.IssueCount)
+		avgBW = bwSum / float64(health.IssueCount)
+	}
+	critScore := 0
+	if maxPR > 0 {
+		critScore += int((avgPR / maxPR) * 50)
+	}
+	if maxBW > 0 {
+		critScore += int((maxBwLabel / maxBW) * 50)
+	}
+	critScore = clampScore(critScore)
+
+	health.Velocity = velocity
+	health.Freshness = freshness
+	health.Flow = flow
+	health.Criticality = CriticalityMetrics{
+		AvgPageRank:       avgPR,
+		AvgBetweenness:    avgBW,
+		MaxBetweenness:    maxBwLabel,
+		CriticalPathCount: critCount,
+		BottleneckCount:   bottleneckCount,
+		CriticalityScore:  critScore,
+	}
+
+	health.Health = ComputeCompositeHealth(velocity.VelocityScore, freshness.FreshnessScore, flow.FlowScore, critScore, cfg)
+	health.HealthLevel = HealthLevelFromScore(health.Health)
+	return health
+}
+
+// ComputeAllLabelHealth computes health for all labels in the issue set.
+func ComputeAllLabelHealth(issues []model.Issue, cfg LabelHealthConfig, now time.Time) LabelAnalysisResult {
+	labels := ExtractLabels(issues)
+	result := LabelAnalysisResult{
+		GeneratedAt:     now,
+		TotalLabels:     labels.LabelCount,
+		Labels:          []LabelHealth{},
+		Summaries:       []LabelSummary{},
+		AttentionNeeded: []string{},
+	}
+
+	// Deterministic traversal
+	sort.Strings(labels.Labels)
+
+	// Precompute stats once for efficiency
+	analyzer := NewAnalyzer(issues)
+	fullStats := analyzer.Analyze()
+
+	for _, label := range labels.Labels {
+		health := ComputeLabelHealthForLabel(label, issues, cfg, now, &fullStats)
+		result.Labels = append(result.Labels, health)
+		summary := LabelSummary{
+			Label:          label,
+			IssueCount:     health.IssueCount,
+			OpenCount:      health.OpenCount,
+			Health:         health.Health,
+			HealthLevel:    health.HealthLevel,
+			NeedsAttention: NeedsAttention(health),
+		}
+		if len(health.Issues) > 0 {
+			summary.TopIssue = health.Issues[0]
+		}
+		result.Summaries = append(result.Summaries, summary)
+		switch health.HealthLevel {
+		case HealthLevelHealthy:
+			result.HealthyCount++
+		case HealthLevelWarning:
+			result.WarningCount++
+			result.AttentionNeeded = append(result.AttentionNeeded, label)
+		case HealthLevelCritical:
+			result.CriticalCount++
+			result.AttentionNeeded = append(result.AttentionNeeded, label)
+		}
+	}
+
+	sort.Slice(result.Summaries, func(i, j int) bool {
+		if result.Summaries[i].Health != result.Summaries[j].Health {
+			return result.Summaries[i].Health > result.Summaries[j].Health
+		}
+		return result.Summaries[i].Label < result.Summaries[j].Label
+	})
+
+	return result
+}
+
+func clampScore(v int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
+}
+
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxFloat(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // ============================================================================
 // Health Score Constants and Thresholds
 // ============================================================================
@@ -205,15 +676,8 @@ func ComputeCompositeHealth(velocity, freshness, flow, criticality int, cfg Labe
 		float64(flow)*cfg.FlowWeight +
 		float64(criticality)*cfg.CriticalityWeight
 
-	// Normalize to 0-100
-	score := int(weighted)
-	if score > 100 {
-		score = 100
-	}
-	if score < 0 {
-		score = 0
-	}
-	return score
+	// Normalize to 0-100 and clamp
+	return clampScore(int(weighted + 0.5))
 }
 
 // NewLabelHealth creates a new LabelHealth with default values
