@@ -2,6 +2,7 @@
 package correlation
 
 import (
+	"bytes"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -280,7 +281,7 @@ func extractEventsFromCommits(extractor *Extractor, commitSHAs []string, filterB
 		}
 	}
 
-	events, err := extractor.parseGitLogOutput(out, filterBeadID)
+	events, err := extractor.parseGitLogOutput(bytes.NewReader(out), filterBeadID)
 	if err != nil {
 		return nil, err
 	}

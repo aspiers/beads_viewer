@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -62,18 +63,28 @@ func (e *Extractor) Extract(opts ExtractOptions) ([]BeadEvent, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = e.repoPath
 
-	out, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		return nil, fmt.Errorf("creating stdout pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("starting git log: %w", err)
+	}
+
+	// Parse output stream
+	events, parseErr := e.parseGitLogOutput(stdout, opts.BeadID)
+
+	if err := cmd.Wait(); err != nil {
+		// If git log failed (non-zero exit), prefer that error unless we have a parsing error
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("git log failed: %s", string(exitErr.Stderr))
 		}
 		return nil, fmt.Errorf("git log failed: %w", err)
 	}
 
-	// Parse output
-	events, err := e.parseGitLogOutput(out, opts.BeadID)
-	if err != nil {
-		return nil, fmt.Errorf("parsing git log output: %w", err)
+	if parseErr != nil {
+		return nil, fmt.Errorf("parsing git log output: %w", parseErr)
 	}
 
 	// Sort chronologically (git log returns newest first)
@@ -127,30 +138,66 @@ func insertBefore(slice []string, marker, value string) []string {
 	return slice
 }
 
-// parseGitLogOutput parses the combined commit info and diff output
-func (e *Extractor) parseGitLogOutput(data []byte, filterBeadID string) ([]BeadEvent, error) {
+// parseGitLogOutput parses the combined commit info and diff output from a stream
+func (e *Extractor) parseGitLogOutput(r io.Reader, filterBeadID string) ([]BeadEvent, error) {
 	var events []BeadEvent
+	scanner := bufio.NewScanner(r)
+	
+	// Increase buffer size to handle long lines in diffs
+	const maxScanTokenSize = 1024 * 1024 // 1MB lines should be enough
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, maxScanTokenSize)
 
-	// Split by commit boundaries
-	commits := splitByCommits(data)
+	var currentCommit *commitInfo
+	var diffBuffer bytes.Buffer
 
-	for _, commitData := range commits {
-		if len(commitData) == 0 {
-			continue
+	// Helper to process the accumulated commit
+	processCommit := func() {
+		if currentCommit == nil {
+			return
 		}
-
-		// Parse commit info from first line
-		info, diffStart, err := parseCommitInfo(commitData)
-		if err != nil {
-			// Skip malformed commits
-			continue
-		}
-
-		// Parse diff section
-		if diffStart < len(commitData) {
-			diffEvents := e.parseDiff(commitData[diffStart:], info, filterBeadID)
+		diffBytes := diffBuffer.Bytes()
+		if len(diffBytes) > 0 {
+			diffEvents := e.parseDiff(diffBytes, *currentCommit, filterBeadID)
 			events = append(events, diffEvents...)
 		}
+		diffBuffer.Reset()
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Check for commit header
+		if commitPattern.MatchString(line) {
+			// Finish previous commit
+			processCommit()
+
+			// Parse new header
+			info, err := parseCommitInfo(line)
+			if err != nil {
+				// Log warning? For now just skip malformed headers but treat as diff content if not a header
+				// But regex matched, so it should be parseable unless fields are missing
+				// If parsing fails, treat as diff content (fallback)
+				diffBuffer.WriteString(line)
+				diffBuffer.WriteByte('\n')
+				continue
+			}
+			
+			currentCommit = &info
+		} else {
+			// Diff content
+			if currentCommit != nil {
+				diffBuffer.WriteString(line)
+				diffBuffer.WriteByte('\n')
+			}
+		}
+	}
+
+	// Process final commit
+	processCommit()
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 
 	return events, nil
@@ -159,45 +206,18 @@ func (e *Extractor) parseGitLogOutput(data []byte, filterBeadID string) ([]BeadE
 // commitPattern matches the start of a commit in our custom log format
 var commitPattern = regexp.MustCompile(`(?m)^[0-9a-f]{40}\|`)
 
-// splitByCommits splits git log output into individual commits
-func splitByCommits(data []byte) [][]byte {
-	indices := commitPattern.FindAllIndex(data, -1)
-	if len(indices) == 0 {
-		return nil
-	}
 
-	var commits [][]byte
-	for i, idx := range indices {
-		start := idx[0]
-		var end int
-		if i+1 < len(indices) {
-			end = indices[i+1][0]
-		} else {
-			end = len(data)
-		}
-		commits = append(commits, data[start:end])
-	}
 
-	return commits
-}
-
-// parseCommitInfo extracts commit metadata from the first line
-func parseCommitInfo(data []byte) (commitInfo, int, error) {
-	// Find the first newline
-	idx := bytes.IndexByte(data, '\n')
-	if idx == -1 {
-		return commitInfo{}, 0, fmt.Errorf("no newline found in commit data")
-	}
-
-	line := string(data[:idx])
+// parseCommitInfo extracts commit metadata from the header line
+func parseCommitInfo(line string) (commitInfo, error) {
 	parts := strings.SplitN(line, "|", 5)
 	if len(parts) != 5 {
-		return commitInfo{}, 0, fmt.Errorf("invalid commit format: %s", line)
+		return commitInfo{}, fmt.Errorf("invalid commit format: %s", line)
 	}
 
 	timestamp, err := time.Parse(time.RFC3339, parts[1])
 	if err != nil {
-		return commitInfo{}, 0, fmt.Errorf("invalid timestamp: %w", err)
+		return commitInfo{}, fmt.Errorf("invalid timestamp: %w", err)
 	}
 
 	info := commitInfo{
@@ -208,7 +228,7 @@ func parseCommitInfo(data []byte) (commitInfo, int, error) {
 		Message:     parts[4],
 	}
 
-	return info, idx + 1, nil
+	return info, nil
 }
 
 // parseDiff extracts bead events from a diff section

@@ -1,18 +1,21 @@
 package correlation
 
 import (
+	"bytes"
 	"testing"
 	"time"
 )
 
-func TestSplitByCommits(t *testing.T) {
+func TestParseGitLogOutput(t *testing.T) {
 	// Mock git log output with two commits
 	data := []byte(`abc123def456789012345678901234567890abcd|2025-01-15T10:00:00Z|Alice|alice@example.com|First commit
+
 diff --git a/.beads/beads.jsonl b/.beads/beads.jsonl
 --- a/.beads/beads.jsonl
 +++ b/.beads/beads.jsonl
 +{"id":"bv-001","title":"First bead","status":"open"}
 def456789012345678901234567890abcdef1234|2025-01-16T11:00:00Z|Bob|bob@example.com|Second commit
+
 diff --git a/.beads/beads.jsonl b/.beads/beads.jsonl
 --- a/.beads/beads.jsonl
 +++ b/.beads/beads.jsonl
@@ -20,29 +23,41 @@ diff --git a/.beads/beads.jsonl b/.beads/beads.jsonl
 +{"id":"bv-001","title":"First bead","status":"in_progress"}
 `)
 
-	commits := splitByCommits(data)
-
-	if len(commits) != 2 {
-		t.Fatalf("Expected 2 commits, got %d", len(commits))
+	e := NewExtractor("/tmp/test")
+	events, err := e.parseGitLogOutput(bytes.NewReader(data), "")
+	if err != nil {
+		t.Fatalf("parseGitLogOutput failed: %v", err)
 	}
 
-	// Check first commit contains "First commit"
-	if string(commits[0][:20]) != "abc123def45678901234" {
-		t.Errorf("First commit should start with SHA")
+	if len(events) != 2 {
+		t.Fatalf("Expected 2 events, got %d", len(events))
 	}
 
-	// Check second commit starts with its SHA
-	if len(commits[1]) < 40 || string(commits[1][:3]) != "def" {
-		t.Errorf("Second commit should start with SHA 'def...', got: %s", string(commits[1][:20]))
+	// Check first event (parsed from second commit because of reverse order in git log? No, parseDiff returns in order, but Extract reverses at the end. Here we just call parseGitLogOutput)
+	// Wait, parseGitLogOutput returns events in order of occurrence in the log (newest first usually).
+	// The mock data has commit 1 then commit 2. Usually git log is newest first.
+	// But let's check the content.
+
+	// The first chunk in data is commit "abc...", timestamp 10:00. EventCreated.
+	// The second chunk is commit "def...", timestamp 11:00. EventClaimed.
+
+	// events[0] corresponds to the first chunk parsed.
+	if events[0].EventType != EventCreated {
+		t.Errorf("First event should be Created, got %v", events[0].EventType)
+	}
+	if events[0].CommitSHA != "abc123def456789012345678901234567890abcd" {
+		t.Errorf("First event SHA mismatch")
+	}
+
+	if events[1].EventType != EventClaimed {
+		t.Errorf("Second event should be Claimed, got %v", events[1].EventType)
 	}
 }
 
 func TestParseCommitInfo(t *testing.T) {
-	data := []byte(`abc123def456789012345678901234567890abcd|2025-01-15T10:30:00Z|Alice Smith|alice@example.com|feat: add login feature
-diff --git ...
-`)
+	line := "abc123def456789012345678901234567890abcd|2025-01-15T10:30:00Z|Alice Smith|alice@example.com|feat: add login feature"
 
-	info, diffStart, err := parseCommitInfo(data)
+	info, err := parseCommitInfo(line)
 	if err != nil {
 		t.Fatalf("parseCommitInfo failed: %v", err)
 	}
@@ -64,25 +79,20 @@ diff --git ...
 	if !info.Timestamp.Equal(expectedTime) {
 		t.Errorf("Timestamp mismatch: got %v, want %v", info.Timestamp, expectedTime)
 	}
-
-	if diffStart <= 0 {
-		t.Errorf("diffStart should be positive, got %d", diffStart)
-	}
 }
 
 func TestParseCommitInfo_InvalidFormat(t *testing.T) {
 	tests := []struct {
 		name string
-		data []byte
+		line string
 	}{
-		{"missing parts", []byte("abc123|2025-01-15\n")},
-		{"no newline", []byte("abc123|2025-01-15|author|email|msg")},
-		{"invalid timestamp", []byte("abc123|not-a-date|author|email|msg\n")},
+		{"missing parts", "abc123def456789012345678901234567890abcd|2025-01-15"},
+		{"invalid timestamp", "abc123def456789012345678901234567890abcd|not-a-date|author|email|msg"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := parseCommitInfo(tt.data)
+			_, err := parseCommitInfo(tt.line)
 			if err == nil {
 				t.Error("Expected error for invalid input")
 			}
@@ -518,19 +528,7 @@ func TestNewExtractor(t *testing.T) {
 	}
 }
 
-func TestSplitByCommits_Empty(t *testing.T) {
-	commits := splitByCommits([]byte{})
-	if commits != nil {
-		t.Error("splitByCommits of empty should return nil")
-	}
-}
 
-func TestSplitByCommits_NoMatch(t *testing.T) {
-	commits := splitByCommits([]byte("no commit headers here"))
-	if commits != nil {
-		t.Error("splitByCommits with no matches should return nil")
-	}
-}
 
 func TestCalculateCycleTime_NoCreatedMilestone(t *testing.T) {
 	now := time.Now()
