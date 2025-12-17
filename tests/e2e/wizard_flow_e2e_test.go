@@ -170,7 +170,7 @@ func TestWizard_ExportConfigPrompts(t *testing.T) {
 	cmd := exec.Command(bv, "--pages")
 	cmd.Dir = repoDir
 	cmd.Stdin = strings.NewReader(input)
-	cmd.Env = append(os.Environ(), "BV_NO_BROWSER=1")
+	cmd.Env = append(os.Environ(), "BV_NO_BROWSER=1", "BV_NO_SAVED_CONFIG=1")
 
 	out, _ := cmd.CombinedOutput()
 	output := string(out)

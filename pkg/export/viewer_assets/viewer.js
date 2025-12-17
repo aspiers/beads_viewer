@@ -1258,15 +1258,15 @@ function getTopByBetweenness(limit = 10) {
 }
 
 /**
- * Get top issues by critical path height (keystones)
+ * Get top issues by critical path depth (keystones)
  */
 function getTopByCriticalPath(limit = 10) {
-  // Try critical_path column if it exists
+  // Try critical_path_depth column if it exists
   try {
     const results = execQuery(`
       SELECT * FROM issue_overview_mv
-      WHERE critical_path_height > 0
-      ORDER BY critical_path_height DESC
+      WHERE critical_path_depth > 0
+      ORDER BY critical_path_depth DESC
       LIMIT ?
     `, [limit]);
     if (results.length > 0) return results;
@@ -1286,7 +1286,7 @@ function getTopByCriticalPath(limit = 10) {
         const id = GRAPH_STATE.graph.nodeId(node.idx);
         const issue = getIssue(id);
         if (issue) {
-          issue.critical_path_height = node.val;
+          issue.critical_path_depth = node.val;
         }
         return issue;
       }).filter(Boolean);

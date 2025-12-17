@@ -20,8 +20,8 @@
   <!-- Security: Content Security Policy -->
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
-    script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com https://d3js.org;
-    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com;
+    script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com https://d3js.org;
+    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
     font-src 'self' https://fonts.gstatic.com;
     img-src 'self' data: blob:;
     connect-src 'self';
@@ -38,8 +38,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
 
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Tailwind CSS (bundled locally for COEP compatibility) -->
+  <script src="vendor/tailwindcss.js"></script>
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -88,18 +88,22 @@
       100% { transform: rotate(360deg); }
     }
 
-    /* Status badges */
-    .status-open { @apply bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200; }
-    .status-in_progress { @apply bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200; }
-    .status-blocked { @apply bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200; }
-    .status-closed { @apply bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200; }
+    /* Status badges - raw CSS fallback for when Tailwind fails */
+    .status-open { background-color: #dbeafe; color: #1e40af; }
+    .status-in_progress { background-color: #fef3c7; color: #92400e; }
+    .status-blocked { background-color: #fee2e2; color: #991b1b; }
+    .status-closed { background-color: #dcfce7; color: #166534; }
+    .dark .status-open { background-color: #1e3a8a; color: #bfdbfe; }
+    .dark .status-in_progress { background-color: #78350f; color: #fef3c7; }
+    .dark .status-blocked { background-color: #7f1d1d; color: #fecaca; }
+    .dark .status-closed { background-color: #14532d; color: #bbf7d0; }
 
-    /* Priority indicators */
-    .priority-0 { @apply border-l-4 border-red-500; }
-    .priority-1 { @apply border-l-4 border-orange-500; }
-    .priority-2 { @apply border-l-4 border-blue-500; }
-    .priority-3 { @apply border-l-4 border-gray-400; }
-    .priority-4 { @apply border-l-4 border-gray-300; }
+    /* Priority indicators - raw CSS fallback */
+    .priority-0 { border-left: 4px solid #ef4444; }
+    .priority-1 { border-left: 4px solid #f97316; }
+    .priority-2 { border-left: 4px solid #3b82f6; }
+    .priority-3 { border-left: 4px solid #9ca3af; }
+    .priority-4 { border-left: 4px solid #d1d5db; }
 
     /* Filter panel: always show on md+ screens */
     @media (min-width: 768px) {
@@ -1091,7 +1095,7 @@
                   <div class="flex items-center justify-between p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
                        @click="showIssue(issue.id)">
                     <span class="text-sm truncate flex-1" x-text="issue.title"></span>
-                    <span class="text-xs font-mono text-indigo-500 ml-2" x-text="issue.critical_path_height || '?'"></span>
+                    <span class="text-xs font-mono text-indigo-500 ml-2" x-text="issue.critical_path_depth || '?'"></span>
                   </div>
                 </template>
                 <p x-show="topByCriticalPath.length === 0" class="text-xs text-gray-400 text-center py-2">No data</p>

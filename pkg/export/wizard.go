@@ -132,9 +132,10 @@ func (w *Wizard) offerSavedConfig(saved *WizardConfig) (bool, error) {
 func (w *Wizard) Run() (*WizardResult, error) {
 	w.printBanner()
 
-	// Check for saved configuration first
+	// Check for saved configuration first (unless BV_NO_SAVED_CONFIG is set)
 	savedConfig, err := LoadWizardConfig()
-	if err == nil && savedConfig != nil && savedConfig.DeployTarget != "" {
+	skipSaved := os.Getenv("BV_NO_SAVED_CONFIG") != ""
+	if !skipSaved && err == nil && savedConfig != nil && savedConfig.DeployTarget != "" {
 		// Found saved config - ask if user wants to use it
 		useSaved, err := w.offerSavedConfig(savedConfig)
 		if err != nil {

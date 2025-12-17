@@ -86,7 +86,7 @@ const chartsState = {
  * @param {Array} issues - Array of issue objects
  * @param {Array} dependencies - Array of dependency objects
  */
-export function initCharts(issues, dependencies) {
+function initCharts(issues, dependencies) {
     chartsState.issues = issues || [];
     chartsState.dependencies = dependencies || [];
     chartsState.initialized = true;
@@ -105,7 +105,7 @@ export function initCharts(issues, dependencies) {
  * @param {Array} issues - Updated issue array
  * @param {Array} dependencies - Updated dependency array
  */
-export function updateCharts(issues, dependencies) {
+function updateCharts(issues, dependencies) {
     chartsState.issues = issues || chartsState.issues;
     chartsState.dependencies = dependencies || chartsState.dependencies;
 
@@ -118,7 +118,7 @@ export function updateCharts(issues, dependencies) {
 /**
  * Destroy all charts and clean up
  */
-export function destroyCharts() {
+function destroyCharts() {
     if (chartsState.burndownChart) {
         chartsState.burndownChart.destroy();
         chartsState.burndownChart = null;
@@ -743,21 +743,14 @@ function dispatchChartEvent(name, detail) {
 }
 
 // ============================================================================
-// PUBLIC API
+// PUBLIC API (exposed via window for non-module usage)
 // ============================================================================
 
-export {
-    initCharts,
-    updateCharts,
-    destroyCharts,
-    CHART_THEME
-};
-
-// Also expose via window for non-module usage
 if (typeof window !== 'undefined') {
     window.bvCharts = {
         init: initCharts,
         update: updateCharts,
-        destroy: destroyCharts
+        destroy: destroyCharts,
+        CHART_THEME: CHART_THEME
     };
 }
