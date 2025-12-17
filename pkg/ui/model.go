@@ -3361,6 +3361,16 @@ func (m *Model) renderFooter() string {
 		Padding(0, 1).
 		Render(fmt.Sprintf("%s %s", filterIcon, filterTxt))
 
+	// Sort badge - only show when not default (bv-3ita)
+	sortBadge := ""
+	if m.sortMode != SortDefault {
+		sortBadge = lipgloss.NewStyle().
+			Background(ColorBgHighlight).
+			Foreground(ColorSecondary).
+			Padding(0, 1).
+			Render(fmt.Sprintf("↕ %s", m.sortMode.String()))
+	}
+
 	labelHint := lipgloss.NewStyle().
 		Foreground(ColorMuted).
 		Background(ColorBgDark).
@@ -3571,6 +3581,9 @@ func (m *Model) renderFooter() string {
 	// ASSEMBLE FOOTER with proper spacing
 	// ─────────────────────────────────────────────────────────────────────────
 	leftWidth := lipgloss.Width(filterBadge) + lipgloss.Width(labelHint) + lipgloss.Width(statsSection)
+	if sortBadge != "" {
+		leftWidth += lipgloss.Width(sortBadge) + 1
+	}
 	if alertsSection != "" {
 		leftWidth += lipgloss.Width(alertsSection) + 1
 	}
@@ -3593,7 +3606,11 @@ func (m *Model) renderFooter() string {
 
 	// Build the footer
 	var parts []string
-	parts = append(parts, filterBadge, labelHint)
+	parts = append(parts, filterBadge)
+	if sortBadge != "" {
+		parts = append(parts, sortBadge)
+	}
+	parts = append(parts, labelHint)
 	if alertsSection != "" {
 		parts = append(parts, alertsSection)
 	}
