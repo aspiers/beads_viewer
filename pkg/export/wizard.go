@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -638,30 +639,71 @@ func (w *Wizard) PerformDeploy() (*WizardResult, error) {
 
 // PrintSuccess prints the success message after deployment.
 func (w *Wizard) PrintSuccess(result *WizardResult) {
-	fmt.Println("")
-	fmt.Println("╔══════════════════════════════════════════════════════════════════╗")
-	fmt.Println("║                    Deployment Complete!                          ║")
-	fmt.Println("╠══════════════════════════════════════════════════════════════════╣")
+	// Build content lines first to calculate required width
+	var lines []string
+	lines = append(lines, "Deployment Complete!")
 
 	switch result.DeployTarget {
 	case "github":
-		fmt.Printf("║  Repository: https://github.com/%-33s║\n", result.RepoFullName)
-		fmt.Printf("║  Live site:  %-51s║\n", result.PagesURL)
-		fmt.Println("║                                                                  ║")
-		fmt.Println("║  Note: GitHub Pages may take 1-2 minutes to become available    ║")
+		lines = append(lines, "Repository: https://github.com/"+result.RepoFullName)
+		lines = append(lines, "Live site:  "+result.PagesURL)
+		lines = append(lines, "")
+		lines = append(lines, "Note: GitHub Pages may take 1-2 minutes to become available")
 	case "cloudflare":
-		fmt.Printf("║  Project:    %-51s║\n", result.CloudflareProject)
-		fmt.Printf("║  Live site:  %-51s║\n", result.CloudflareURL)
-		fmt.Println("║                                                                  ║")
-		fmt.Println("║  Cloudflare Pages deploys are typically available immediately   ║")
+		lines = append(lines, "Project:    "+result.CloudflareProject)
+		lines = append(lines, "Live site:  "+result.CloudflareURL)
+		lines = append(lines, "")
+		lines = append(lines, "Cloudflare Pages deploys are typically available immediately")
 	case "local":
-		fmt.Printf("║  Bundle: %-56s║\n", result.BundlePath)
-		fmt.Println("║                                                                  ║")
-		fmt.Println("║  To preview:                                                     ║")
-		fmt.Printf("║    bv --preview-pages %s%-30s║\n", result.BundlePath, "")
+		lines = append(lines, "Bundle: "+result.BundlePath)
+		lines = append(lines, "")
+		lines = append(lines, "To preview:")
+		lines = append(lines, "  bv --preview-pages "+result.BundlePath)
 	}
 
-	fmt.Println("╚══════════════════════════════════════════════════════════════════╝")
+	// Calculate width: max line length + 4 (for "║  " prefix and " ║" suffix)
+	width := 0
+	for _, line := range lines {
+		if len(line) > width {
+			width = len(line)
+		}
+	}
+	width += 4 // Add padding for borders
+
+	// Minimum width for aesthetics
+	if width < 50 {
+		width = 50
+	}
+
+	// Print box
+	fmt.Println("")
+	fmt.Print("╔")
+	for i := 0; i < width; i++ {
+		fmt.Print("═")
+	}
+	fmt.Println("╗")
+
+	// Title line (centered)
+	title := lines[0]
+	padding := (width - len(title)) / 2
+	fmt.Printf("║%s%s%s║\n", strings.Repeat(" ", padding), title, strings.Repeat(" ", width-padding-len(title)))
+
+	fmt.Print("╠")
+	for i := 0; i < width; i++ {
+		fmt.Print("═")
+	}
+	fmt.Println("╣")
+
+	// Content lines (left-aligned with 2-space indent)
+	for _, line := range lines[1:] {
+		fmt.Printf("║  %-*s║\n", width-3, line)
+	}
+
+	fmt.Print("╚")
+	for i := 0; i < width; i++ {
+		fmt.Print("═")
+	}
+	fmt.Println("╝")
 	fmt.Println("")
 }
 
