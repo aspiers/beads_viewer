@@ -62,7 +62,8 @@ type CapsLockTimerExpiredMsg struct{}
 
 // ShowTutorialMsg signals the main model to show the tutorial.
 type ShowTutorialMsg struct {
-	ContextOnly bool // If true, show context-specific help only
+	ContextOnly bool   // If true, show context-specific help only
+	Context     string // Current context identifier (used when ContextOnly is true)
 }
 
 // CapsLockTracker tracks CapsLock-style key presses for double-tap detection.
