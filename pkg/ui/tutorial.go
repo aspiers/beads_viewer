@@ -1743,8 +1743,8 @@ See how your project looked at any point in history — compare past to present.
 
 | Key | Action |
 |-----|--------|
-| **t** | Quick time travel to recent point |
-| **T** | Full time travel with git ref input |
+| **t** | Full time travel with git ref input |
+| **T** | Quick time travel to HEAD~5 |
 | **h** | History view (visual timeline) |
 
 ### Git Reference Syntax
@@ -1954,11 +1954,14 @@ The graph view shows these cross-repo relationships.
 
 ### Filtering by Repo
 
+Press **w** to open the repo picker, then:
+
 | Key | Effect |
 |-----|--------|
-| **1** | Show only repo 1 issues |
-| **2** | Show only repo 2 issues |
-| **0** | Show all repos (workspace view) |
+| **j/k** | Navigate repos |
+| **Space** | Toggle repo selection |
+| **Enter** | Apply filter |
+| **a** | Select all repos |
 
 ### Robot Mode
 
