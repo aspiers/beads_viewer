@@ -100,7 +100,7 @@ const contextHelpList = `## List View
   r         Ready (no blockers)
   a         All issues
   /         Fuzzy search
-  ~         Semantic search (AI)
+  Ctrl+S    Semantic search (AI)
 
 **Switch Views**
   b         Board view
@@ -159,16 +159,16 @@ const contextHelpHistory = `## History View
 
 **Navigation**
   j/k       Navigate timeline
-  Enter     Preview state at commit
-  d         Show diff
-  Esc       Return to current
+  Enter     Jump to selected bead
+  y         Copy commit SHA
+  o         Open commit in browser
+  g         Go to graph view
+  h/Esc     Return to list
 
 **Timeline Shows**
 • Git commits with bead changes
 • Bead-only changes (bd commands)
-• Time-travel preview available
-
-Press 1 to return to List view`
+• Time-travel preview available`
 
 const contextHelpDetail = `## Detail View
 
@@ -177,11 +177,9 @@ const contextHelpDetail = `## Detail View
   Esc       Return to list
   Tab       Switch to split view
 
-**Actions**
+**Actions (from list view)**
   O         Open in editor
   C         Copy issue ID
-  e         Edit description
-  s         Change status
 
 **Info Shown**
 • Full description (markdown)
@@ -263,7 +261,6 @@ You're looking at the help overlay!
 
 **Other Help**
   ` + "`" + `         Full tutorial (any time)
-  ~         Context-specific help
   ;         Toggle shortcuts sidebar`
 
 const contextHelpTimeTravel = `## Time Travel Mode
@@ -339,7 +336,6 @@ const contextHelpGeneric = `## Quick Reference
 **Global Keys**
   ?         Help overlay
   ` + "`" + `         Full tutorial
-  ~         Context help
   Esc       Close/back
   q         Quit
 
