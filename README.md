@@ -2108,8 +2108,8 @@ bv
 | | `a` | Toggle **Actionable Plan** |
 | | `h` | Toggle **History View** (bead-to-commit correlation) |
 | | `f` | Toggle **Flow Matrix** (cross-label dependencies) |
-| | `F3` | Toggle **Label Dashboard** (label health analytics) |
-| | `F4` | Toggle **Attention View** (label attention scores) |
+| | `[` | Toggle **Label Dashboard** (label health analytics) |
+| | `]` | Toggle **Attention View** (label attention scores) |
 | **Kanban Board** | `h` / `l` | Move Between Columns |
 | | `j` / `k` | Move Within Column |
 | **Insights Dashboard** | `Tab` | Next Panel |
@@ -2126,8 +2126,9 @@ bv
 | | `C` | Copy Issue to Clipboard |
 | | `O` | Open in Editor |
 | **Global** | `?` | Toggle Help Overlay |
+| | `;` | Toggle Shortcuts Sidebar |
 | | `!` | Toggle **Alerts Panel** (proactive warnings) |
-| | `F5` | Recipe Picker |
+| | `'` | Recipe Picker |
 | | `w` | Repo Picker (workspace mode) |
 
 ---
