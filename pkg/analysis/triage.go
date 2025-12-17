@@ -367,9 +367,6 @@ func ComputeTriageFromAnalyzer(analyzer *Analyzer, stats *GraphStats, issues []m
 	// Compute impact scores using the already-computed stats
 	impactScores := analyzer.ComputeImpactScoresFromStats(stats, now)
 
-	// Get execution plan for unblock analysis (currently unused but kept for future phases)
-	_ = analyzer.GetExecutionPlan()
-
 	// Build unblocks map
 	unblocksMap := buildUnblocksMap(analyzer, issues)
 
