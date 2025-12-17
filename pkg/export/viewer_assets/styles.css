@@ -5,11 +5,28 @@
  * Supports system preference detection and manual toggle
  */
 
+/* Vendored Fonts - Inter and JetBrains Mono for offline use */
+@font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 100 900; /* Variable font supports all weights */
+    font-display: swap;
+    src: url('vendor/inter-variable.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('vendor/jetbrains-mono.woff2') format('woff2');
+}
+
 /* CSS Variables - Shared values */
 :root {
     /* Typography */
     --bv-font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-    --bv-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --bv-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
     /* Spacing */
     --bv-space-xs: 0.25rem;

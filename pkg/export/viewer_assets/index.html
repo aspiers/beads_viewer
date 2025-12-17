@@ -9,20 +9,19 @@
   <script>
     (function() {
       const stored = localStorage.getItem('darkMode');
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      // Use stored preference, or fall back to system preference
-      if (stored === 'true' || (stored === null && prefersDark)) {
+      // Default to dark mode when no preference is stored
+      if (stored === 'true' || stored === null) {
         document.documentElement.classList.add('dark');
       }
     })();
   </script>
 
-  <!-- Security: Content Security Policy -->
+  <!-- Security: Content Security Policy - fully self-contained for offline use -->
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
-    script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com https://d3js.org;
-    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-    font-src 'self' https://fonts.gstatic.com;
+    script-src 'self' 'unsafe-eval' 'unsafe-inline';
+    style-src 'self' 'unsafe-inline';
+    font-src 'self';
     img-src 'self' data: blob:;
     connect-src 'self';
     worker-src 'self' blob:;
@@ -33,10 +32,8 @@
     .mermaid-container { min-height: 150px; }
   </style>
 
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+  <!-- Fonts: Use system font stack for offline compatibility -->
+  <!-- Falls back to Inter/JetBrains Mono if installed locally, otherwise uses similar system fonts -->
 
   <!-- Tailwind CSS (bundled locally for COEP compatibility) -->
   <script src="vendor/tailwindcss.js"></script>
@@ -46,8 +43,8 @@
       theme: {
         extend: {
           fontFamily: {
-            sans: ['Inter', 'system-ui', 'sans-serif'],
-            mono: ['JetBrains Mono', 'monospace'],
+            sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+            mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
           },
           colors: {
             beads: {
@@ -1974,17 +1971,19 @@
     </div>
   </div>
 
-  <!-- Alpine.js -->
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <!-- Alpine.js plugins (must load BEFORE Alpine core) - vendored for offline use -->
+  <script defer src="vendor/alpine-collapse.min.js"></script>
+  <!-- Alpine.js core - vendored for offline use -->
+  <script defer src="vendor/alpine.min.js"></script>
 
-  <!-- DOMPurify for safe HTML rendering -->
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+  <!-- DOMPurify for safe HTML rendering - vendored for offline use -->
+  <script src="vendor/dompurify.min.js"></script>
 
-  <!-- Marked.js for markdown -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Marked.js for markdown - vendored for offline use -->
+  <script src="vendor/marked.min.js"></script>
 
-  <!-- Mermaid.js for dependency graphs -->
-  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <!-- Mermaid.js for dependency graphs - vendored for offline use -->
+  <script src="vendor/mermaid.min.js"></script>
   <script>
     // Initialize Mermaid with theme based on dark mode state
     // Uses Dracula-inspired colors for dark mode, GitHub-inspired for light mode
@@ -2038,12 +2037,12 @@
     };
   </script>
 
-  <!-- Force-Graph dependencies (Graph view) -->
-  <script src="https://unpkg.com/force-graph@1.43.5/dist/force-graph.min.js"></script>
-  <script src="https://d3js.org/d3.v7.min.js" crossorigin="anonymous"></script>
+  <!-- Force-Graph dependencies (Graph view) - vendored for offline use -->
+  <script src="vendor/force-graph.min.js"></script>
+  <script src="vendor/d3.v7.min.js"></script>
 
-  <!-- Chart.js for interactive charts (bv-wb6h) -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- Chart.js for interactive charts - vendored for offline use -->
+  <script src="vendor/chart.umd.min.js"></script>
 
   <!-- Charts module -->
   <script src="charts.js"></script>

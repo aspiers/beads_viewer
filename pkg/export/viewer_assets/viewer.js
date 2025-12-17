@@ -1704,7 +1704,7 @@ function beadsApp() {
     filtersExpanded: false,  // Collapsible filters on mobile
     darkMode: localStorage.getItem('darkMode') !== null
       ? localStorage.getItem('darkMode') === 'true'
-      : window.matchMedia('(prefers-color-scheme: dark)').matches,
+      : true, // Default to dark mode
 
     // Data
     stats: {},
@@ -2125,6 +2125,13 @@ function beadsApp() {
     applyFilter() {
       this.page = 1;
       this.loadIssues();
+    },
+
+    /**
+     * Alias for applyFilter (used by dashboard click handlers)
+     */
+    applyFilters() {
+      this.applyFilter();
     },
 
     /**
