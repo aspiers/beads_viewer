@@ -2987,12 +2987,16 @@ func main() {
 			output := struct {
 				GeneratedAt      string                 `json:"generated_at"`
 				ResolvedRevision string                 `json:"resolved_revision"`
+				AsOf             string                 `json:"as_of,omitempty"`        // "to" snapshot ref (if --as-of used)
+				AsOfCommit       string                 `json:"as_of_commit,omitempty"` // Resolved commit SHA for "to"
 				FromDataHash     string                 `json:"from_data_hash"`
 				ToDataHash       string                 `json:"to_data_hash"`
 				Diff             *analysis.SnapshotDiff `json:"diff"`
 			}{
 				GeneratedAt:      time.Now().UTC().Format(time.RFC3339),
 				ResolvedRevision: revision,
+				AsOf:             *asOf,
+				AsOfCommit:       asOfResolved,
 				FromDataHash:     analysis.ComputeDataHash(historicalIssues),
 				ToDataHash:       dataHash,
 				Diff:             diff,
