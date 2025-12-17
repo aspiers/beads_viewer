@@ -17,6 +17,14 @@ type TutorialPage struct {
 	Contexts []string // Which view contexts this page applies to (empty = all)
 }
 
+// tutorialFocus tracks which element has focus (bv-wdsd)
+type tutorialFocus int
+
+const (
+	focusTutorialContent tutorialFocus = iota
+	focusTutorialTOC
+)
+
 // TutorialModel manages the tutorial overlay state.
 type TutorialModel struct {
 	pages        []TutorialPage
@@ -32,6 +40,11 @@ type TutorialModel struct {
 
 	// Markdown rendering with Glamour (bv-lb0h)
 	markdownRenderer *MarkdownRenderer
+
+	// Keyboard navigation state (bv-wdsd)
+	focus       tutorialFocus // Current focus: content or TOC
+	shouldClose bool          // Signal to parent to close tutorial
+	tocCursor   int           // Cursor position in TOC when focused
 }
 
 // NewTutorialModel creates a new tutorial model with default pages.
@@ -54,6 +67,9 @@ func NewTutorialModel(theme Theme) TutorialModel {
 		contextMode:      false,
 		context:          "",
 		markdownRenderer: NewMarkdownRendererWithTheme(contentWidth, theme),
+		focus:            focusTutorialContent,
+		shouldClose:      false,
+		tocCursor:        0,
 	}
 }
 
@@ -62,44 +78,134 @@ func (m TutorialModel) Init() tea.Cmd {
 	return nil
 }
 
-// Update handles keyboard input for the tutorial.
+// Update handles keyboard input for the tutorial with focus management (bv-wdsd).
 func (m TutorialModel) Update(msg tea.Msg) (TutorialModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Global keys (work in any focus mode)
 		switch msg.String() {
-		// Navigation between pages
-		case "right", "l", "n", "tab":
-			m.NextPage()
-		case "left", "h", "p", "shift+tab":
-			m.PrevPage()
-
-		// Scrolling within page
-		case "j", "down":
-			m.scrollOffset++
-		case "k", "up":
-			if m.scrollOffset > 0 {
-				m.scrollOffset--
-			}
-		case "g", "home":
-			m.scrollOffset = 0
-		case "G", "end":
-			// Will be clamped in View()
-			m.scrollOffset = 9999
-
-		// TOC toggle
-		case "t":
-			m.tocVisible = !m.tocVisible
-
-		// Jump to specific page (1-9)
-		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			pageNum := int(msg.String()[0] - '0')
+		case "esc", "q":
+			// Mark current page as viewed before closing
 			pages := m.visiblePages()
-			if pageNum > 0 && pageNum <= len(pages) {
-				m.JumpToPage(pageNum - 1)
+			if m.currentPage >= 0 && m.currentPage < len(pages) {
+				m.progress[pages[m.currentPage].ID] = true
 			}
+			m.shouldClose = true
+			return m, nil
+
+		case "t":
+			// Toggle TOC and switch focus
+			m.tocVisible = !m.tocVisible
+			if m.tocVisible {
+				m.focus = focusTutorialTOC
+				m.tocCursor = m.currentPage // Sync TOC cursor with current page
+			} else {
+				m.focus = focusTutorialContent
+			}
+			return m, nil
+
+		case "tab":
+			// Switch focus between content and TOC (if visible)
+			if m.tocVisible {
+				if m.focus == focusTutorialContent {
+					m.focus = focusTutorialTOC
+					m.tocCursor = m.currentPage
+				} else {
+					m.focus = focusTutorialContent
+				}
+			} else {
+				// If TOC not visible, tab advances page
+				m.NextPage()
+			}
+			return m, nil
 		}
+
+		// Route to focus-specific handlers
+		if m.focus == focusTutorialTOC && m.tocVisible {
+			return m.handleTOCKeys(msg), nil
+		}
+		return m.handleContentKeys(msg), nil
 	}
 	return m, nil
+}
+
+// handleContentKeys handles keys when content area has focus (bv-wdsd).
+func (m TutorialModel) handleContentKeys(msg tea.KeyMsg) TutorialModel {
+	switch msg.String() {
+	// Page navigation
+	case "right", "l", "n", " ": // Space added for next page
+		m.NextPage()
+	case "left", "h", "p", "shift+tab":
+		m.PrevPage()
+
+	// Content scrolling
+	case "j", "down":
+		m.scrollOffset++
+	case "k", "up":
+		if m.scrollOffset > 0 {
+			m.scrollOffset--
+		}
+
+	// Half-page scrolling
+	case "ctrl+d":
+		visibleHeight := m.height - 10
+		if visibleHeight < 5 {
+			visibleHeight = 5
+		}
+		m.scrollOffset += visibleHeight / 2
+	case "ctrl+u":
+		visibleHeight := m.height - 10
+		if visibleHeight < 5 {
+			visibleHeight = 5
+		}
+		m.scrollOffset -= visibleHeight / 2
+		if m.scrollOffset < 0 {
+			m.scrollOffset = 0
+		}
+
+	// Jump to top/bottom
+	case "g", "home":
+		m.scrollOffset = 0
+	case "G", "end":
+		m.scrollOffset = 9999 // Will be clamped in View()
+
+	// Jump to specific page (1-9)
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		pageNum := int(msg.String()[0] - '0')
+		pages := m.visiblePages()
+		if pageNum > 0 && pageNum <= len(pages) {
+			m.JumpToPage(pageNum - 1)
+		}
+	}
+	return m
+}
+
+// handleTOCKeys handles keys when TOC has focus (bv-wdsd).
+func (m TutorialModel) handleTOCKeys(msg tea.KeyMsg) TutorialModel {
+	pages := m.visiblePages()
+
+	switch msg.String() {
+	case "j", "down":
+		if m.tocCursor < len(pages)-1 {
+			m.tocCursor++
+		}
+	case "k", "up":
+		if m.tocCursor > 0 {
+			m.tocCursor--
+		}
+	case "g", "home":
+		m.tocCursor = 0
+	case "G", "end":
+		m.tocCursor = len(pages) - 1
+	case "enter", " ":
+		// Jump to selected page in TOC
+		m.JumpToPage(m.tocCursor)
+		m.focus = focusTutorialContent
+	case "h", "left":
+		// Switch back to content
+		m.focus = focusTutorialContent
+	}
+	return m
 }
 
 // View renders the tutorial overlay.
@@ -282,13 +388,19 @@ func (m TutorialModel) renderContent(page TutorialPage, width int) string {
 	return content
 }
 
-// renderTOC renders the table of contents sidebar.
+// renderTOC renders the table of contents sidebar with focus indication (bv-wdsd).
 func (m TutorialModel) renderTOC(pages []TutorialPage) string {
 	r := m.theme.Renderer
 
+	// Use different border style when TOC has focus
+	borderColor := m.theme.Border
+	if m.focus == focusTutorialTOC {
+		borderColor = m.theme.Primary
+	}
+
 	tocStyle := r.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(m.theme.Border).
+		BorderForeground(borderColor).
 		Padding(0, 1).
 		Width(22)
 
@@ -307,11 +419,20 @@ func (m TutorialModel) renderTOC(pages []TutorialPage) string {
 		Bold(true).
 		Foreground(m.theme.Primary)
 
+	// TOC cursor style (when TOC has focus and cursor is on this item)
+	cursorStyle := r.NewStyle().
+		Bold(true).
+		Foreground(m.theme.InProgress).
+		Background(m.theme.Highlight)
+
 	viewedStyle := r.NewStyle().
 		Foreground(m.theme.Open)
 
 	var b strings.Builder
 	b.WriteString(headerStyle.Render("Contents"))
+	if m.focus == focusTutorialTOC {
+		b.WriteString(r.NewStyle().Foreground(m.theme.Primary).Render(" ●"))
+	}
 	b.WriteString("\n")
 
 	currentSection := ""
@@ -324,10 +445,16 @@ func (m TutorialModel) renderTOC(pages []TutorialPage) string {
 			b.WriteString("\n")
 		}
 
-		// Page entry with indentation under section
+		// Determine style based on cursor position and current page
 		prefix := "   "
 		style := itemStyle
-		if i == m.currentPage {
+
+		// TOC has focus and cursor is on this item
+		if m.focus == focusTutorialTOC && i == m.tocCursor {
+			prefix = " → "
+			style = cursorStyle
+		} else if i == m.currentPage {
+			// Current page indicator (but not cursor)
 			prefix = " ▶ "
 			style = selectedStyle
 		}
@@ -351,7 +478,7 @@ func (m TutorialModel) renderTOC(pages []TutorialPage) string {
 	return tocStyle.Render(b.String())
 }
 
-// renderFooter renders navigation hints.
+// renderFooter renders context-sensitive navigation hints (bv-wdsd).
 func (m TutorialModel) renderFooter(totalPages int) string {
 	r := m.theme.Renderer
 
@@ -365,13 +492,26 @@ func (m TutorialModel) renderFooter(totalPages int) string {
 	sepStyle := r.NewStyle().
 		Foreground(m.theme.Muted)
 
-	// Build hints with styled keys
-	hints := []string{
-		keyStyle.Render("←/→") + descStyle.Render(" pages"),
-		keyStyle.Render("j/k") + descStyle.Render(" scroll"),
-		keyStyle.Render("t") + descStyle.Render(" TOC"),
-		keyStyle.Render("1-9") + descStyle.Render(" jump"),
-		keyStyle.Render("Esc") + descStyle.Render(" close"),
+	var hints []string
+
+	if m.focus == focusTutorialTOC && m.tocVisible {
+		// TOC-focused hints
+		hints = []string{
+			keyStyle.Render("j/k") + descStyle.Render(" select"),
+			keyStyle.Render("Enter") + descStyle.Render(" go to page"),
+			keyStyle.Render("Tab") + descStyle.Render(" back to content"),
+			keyStyle.Render("t") + descStyle.Render(" hide TOC"),
+			keyStyle.Render("q") + descStyle.Render(" close"),
+		}
+	} else {
+		// Content-focused hints
+		hints = []string{
+			keyStyle.Render("←/→/Space") + descStyle.Render(" pages"),
+			keyStyle.Render("j/k") + descStyle.Render(" scroll"),
+			keyStyle.Render("Ctrl+d/u") + descStyle.Render(" half-page"),
+			keyStyle.Render("t") + descStyle.Render(" TOC"),
+			keyStyle.Render("q") + descStyle.Render(" close"),
+		}
 	}
 
 	sep := sepStyle.Render(" │ ")
@@ -500,6 +640,16 @@ func (m TutorialModel) IsComplete() bool {
 		}
 	}
 	return len(pages) > 0
+}
+
+// ShouldClose returns true if user requested to close the tutorial (bv-wdsd).
+func (m TutorialModel) ShouldClose() bool {
+	return m.shouldClose
+}
+
+// ResetClose resets the close flag (call after handling close) (bv-wdsd).
+func (m *TutorialModel) ResetClose() {
+	m.shouldClose = false
 }
 
 // visiblePages returns pages filtered by context if contextMode is enabled.

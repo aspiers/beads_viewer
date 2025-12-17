@@ -690,3 +690,172 @@ func TestTutorialMarkdownWithTables(t *testing.T) {
 		t.Error("View should contain table header 'Action'")
 	}
 }
+
+// Tests for Keyboard Navigation (bv-wdsd)
+
+func TestTutorialExitKeys(t *testing.T) {
+	// Test 'q' key closes
+	m := newTestTutorialModel()
+	if m.ShouldClose() {
+		t.Error("Should not close initially")
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	if !m.ShouldClose() {
+		t.Error("'q' should trigger close")
+	}
+
+	// Test Esc key closes
+	m = newTestTutorialModel()
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if !m.ShouldClose() {
+		t.Error("Esc should trigger close")
+	}
+}
+
+func TestTutorialSpaceNavigates(t *testing.T) {
+	m := newTestTutorialModel()
+
+	// Space should advance to next page
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	if m.currentPage != 1 {
+		t.Error("Space should navigate to next page")
+	}
+}
+
+func TestTutorialHalfPageScroll(t *testing.T) {
+	m := newTestTutorialModel()
+	m.SetSize(80, 30)
+
+	// Ctrl+d should scroll half page down
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if m.scrollOffset == 0 {
+		t.Error("Ctrl+d should scroll down")
+	}
+
+	savedOffset := m.scrollOffset
+
+	// Ctrl+u should scroll half page up
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	if m.scrollOffset >= savedOffset {
+		t.Error("Ctrl+u should scroll up")
+	}
+}
+
+func TestTutorialFocusManagement(t *testing.T) {
+	m := newTestTutorialModel()
+
+	// Initially content has focus
+	if m.focus != focusTutorialContent {
+		t.Error("Content should have initial focus")
+	}
+
+	// Toggle TOC with 't'
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if !m.tocVisible {
+		t.Error("TOC should be visible after 't'")
+	}
+	if m.focus != focusTutorialTOC {
+		t.Error("TOC should have focus after 't'")
+	}
+
+	// Tab switches focus back to content
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.focus != focusTutorialContent {
+		t.Error("Tab should switch focus to content")
+	}
+
+	// Tab again switches back to TOC (when visible)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.focus != focusTutorialTOC {
+		t.Error("Tab should switch focus back to TOC")
+	}
+}
+
+func TestTutorialTOCNavigation(t *testing.T) {
+	m := newTestTutorialModel()
+	m.tocVisible = true
+	m.focus = focusTutorialTOC
+	m.tocCursor = 0
+
+	// j/down moves cursor down
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if m.tocCursor != 1 {
+		t.Error("'j' should move TOC cursor down")
+	}
+
+	// k/up moves cursor up
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	if m.tocCursor != 0 {
+		t.Error("'k' should move TOC cursor up")
+	}
+
+	// Enter jumps to selected page
+	m.tocCursor = 2
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.currentPage != 2 {
+		t.Error("Enter should jump to TOC cursor position")
+	}
+	if m.focus != focusTutorialContent {
+		t.Error("Enter should switch focus to content")
+	}
+}
+
+func TestTutorialTOCCursorIndicator(t *testing.T) {
+	m := newTestTutorialModel()
+	m.SetSize(80, 24)
+	m.tocVisible = true
+	m.focus = focusTutorialTOC
+	m.tocCursor = 1
+
+	view := m.View()
+
+	// Should contain cursor indicator
+	if !strings.Contains(view, "→") {
+		t.Error("TOC should show cursor indicator when focused")
+	}
+
+	// Should contain focus indicator
+	if !strings.Contains(view, "●") {
+		t.Error("TOC should show focus indicator")
+	}
+}
+
+func TestTutorialContextSensitiveFooter(t *testing.T) {
+	m := newTestTutorialModel()
+	m.SetSize(80, 24)
+
+	// Content focus footer
+	view := m.View()
+	if !strings.Contains(view, "Space") {
+		t.Error("Content footer should show Space hint")
+	}
+	if !strings.Contains(view, "Ctrl+d") {
+		t.Error("Content footer should show Ctrl+d hint")
+	}
+
+	// TOC focus footer
+	m.tocVisible = true
+	m.focus = focusTutorialTOC
+	view = m.View()
+	if !strings.Contains(view, "Enter") {
+		t.Error("TOC footer should show Enter hint")
+	}
+	if !strings.Contains(view, "back to content") {
+		t.Error("TOC footer should show back to content hint")
+	}
+}
+
+func TestTutorialResetClose(t *testing.T) {
+	m := newTestTutorialModel()
+	m.shouldClose = true
+
+	if !m.ShouldClose() {
+		t.Error("ShouldClose should return true")
+	}
+
+	m.ResetClose()
+	if m.ShouldClose() {
+		t.Error("ResetClose should clear shouldClose flag")
+	}
+}
