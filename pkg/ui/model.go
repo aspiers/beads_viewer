@@ -126,6 +126,19 @@ type FileChangedMsg struct{}
 // semanticDebounceTickMsg is sent after debounce delay to trigger semantic computation
 type semanticDebounceTickMsg struct{}
 
+// ReadyTimeoutMsg is sent after a short delay to ensure the UI becomes ready
+// even if the terminal doesn't send WindowSizeMsg promptly (bv-7wl7)
+type ReadyTimeoutMsg struct{}
+
+// ReadyTimeoutCmd returns a command that sends ReadyTimeoutMsg after 100ms.
+// This ensures the TUI doesn't hang on "Initializing..." if the terminal
+// is slow to report its size (common in tmux, SSH, some terminal emulators).
+func ReadyTimeoutCmd() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
+		return ReadyTimeoutMsg{}
+	})
+}
+
 // WatchFileCmd returns a command that waits for file changes and sends FileChangedMsg
 func WatchFileCmd(w *watcher.Watcher) tea.Cmd {
 	return func() tea.Msg {
@@ -804,7 +817,11 @@ func NewModel(issues []model.Issue, activeRecipe *recipe.Recipe, beadsPath strin
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{CheckUpdateCmd(), WaitForPhase2Cmd(m.analysis)}
+	cmds := []tea.Cmd{
+		CheckUpdateCmd(),
+		WaitForPhase2Cmd(m.analysis),
+		ReadyTimeoutCmd(), // bv-7wl7: Fallback if terminal delays WindowSizeMsg
+	}
 	if m.watcher != nil {
 		cmds = append(cmds, WatchFileCmd(m.watcher))
 	}
@@ -828,6 +845,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateAvailable = true
 		m.updateTag = msg.TagName
 		m.updateURL = msg.URL
+
+	case ReadyTimeoutMsg:
+		// bv-7wl7: Fallback if terminal doesn't send WindowSizeMsg promptly.
+		// Set ready with reasonable defaults so the UI doesn't hang on "Initializing...".
+		if !m.ready {
+			m.width = 120  // Reasonable default width
+			m.height = 40  // Reasonable default height
+			m.ready = true
+			// Initialize components with default sizes
+			m.list.SetSize(m.width, m.height-3)
+			m.viewport = viewport.New(m.width, m.height-2)
+			m.insightsPanel.SetSize(m.width, m.height-1)
+			m.labelDashboard.SetSize(m.width, m.height-1)
+		}
 
 	case SemanticIndexReadyMsg:
 		m.semanticIndexBuilding = false
