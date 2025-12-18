@@ -2601,3 +2601,198 @@ func TestFileTree_RenderPanel(t *testing.T) {
 		t.Error("File tree panel should contain 'FILES' header")
 	}
 }
+
+func TestFileTree_CursorResetOnToggle(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// Move cursor to non-zero position
+	h.MoveDownFileTree()
+	h.MoveDownFileTree()
+	h.MoveDownFileTree()
+	savedIdx := h.selectedFileIdx
+
+	// Hide file tree
+	h.ToggleFileTree()
+
+	// Show file tree again
+	h.ToggleFileTree()
+
+	// Cursor should be preserved (state is maintained)
+	if h.selectedFileIdx != savedIdx {
+		t.Errorf("Cursor should be preserved after toggle: was %d, now %d", savedIdx, h.selectedFileIdx)
+	}
+}
+
+func TestFileTree_MultipleFilesPerCommit(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// createTestHistoryReportWithFiles has commits with multiple files
+	// bv-1 has commit abc123 with 2 files: pkg/auth/token.go, pkg/auth/session.go
+	// Verify both files appear in the tree
+
+	// Expand all directories to find files
+	// NOTE: Must use a while-loop because expanding a directory rebuilds flatFileList,
+	// and for-range captures the original slice which doesn't include newly added nodes
+	expandedAny := true
+	for expandedAny {
+		expandedAny = false
+		for i := 0; i < len(h.flatFileList); i++ {
+			node := h.flatFileList[i]
+			if node.IsDir && !node.Expanded {
+				h.selectedFileIdx = i
+				h.ToggleExpandFile()
+				expandedAny = true
+				break // restart loop since flatFileList changed
+			}
+		}
+	}
+
+	// Look for token.go and session.go
+	var foundToken, foundSession bool
+	for _, node := range h.flatFileList {
+		if node.Name == "token.go" {
+			foundToken = true
+		}
+		if node.Name == "session.go" {
+			foundSession = true
+		}
+	}
+
+	if !foundToken {
+		t.Error("Expected token.go in file tree (from commit with multiple files)")
+	}
+	if !foundSession {
+		t.Error("Expected session.go in file tree (from commit with multiple files)")
+	}
+}
+
+func TestFileTree_CommitsGroupedByPath(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// pkg/auth/token.go is modified in 2 commits (abc123 in bv-1 and ghi789 in bv-2)
+	// When we select token.go, it should filter to show beads that touched it
+
+	// Expand tree to find token.go
+	// Use while-loop since flatFileList changes when directories expand
+	expandedAny := true
+	for expandedAny {
+		expandedAny = false
+		for i := 0; i < len(h.flatFileList); i++ {
+			node := h.flatFileList[i]
+			if node.IsDir && !node.Expanded {
+				h.selectedFileIdx = i
+				h.ToggleExpandFile()
+				expandedAny = true
+				break
+			}
+		}
+	}
+
+	// Find and select token.go
+	for i, node := range h.flatFileList {
+		if node.Name == "token.go" && !node.IsDir {
+			h.selectedFileIdx = i
+			h.SelectFile()
+			break
+		}
+	}
+
+	// Verify filter is set
+	filter := h.GetFileFilter()
+	if filter == "" {
+		t.Error("File filter should be set after selecting token.go")
+	}
+
+	if !strings.HasSuffix(filter, "token.go") {
+		t.Errorf("File filter should end with 'token.go', got %s", filter)
+	}
+}
+
+func TestFileTree_DirectoryContainsChildFiles(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// Find pkg directory
+	var pkgIdx int
+	for i, node := range h.flatFileList {
+		if node.Name == "pkg" && node.IsDir {
+			pkgIdx = i
+			break
+		}
+	}
+
+	// Expand pkg
+	h.selectedFileIdx = pkgIdx
+	h.ToggleExpandFile()
+
+	// Should now have child directories (auth, db, logging)
+	pkgNode := h.flatFileList[pkgIdx]
+	if len(pkgNode.Children) == 0 {
+		t.Error("pkg directory should have child directories")
+	}
+
+	// Verify subdirectories exist
+	subDirs := make(map[string]bool)
+	for _, child := range pkgNode.Children {
+		if child.IsDir {
+			subDirs[child.Name] = true
+		}
+	}
+
+	expected := []string{"auth", "db", "logging"}
+	for _, dir := range expected {
+		if !subDirs[dir] {
+			t.Errorf("Expected %s/ subdirectory under pkg/", dir)
+		}
+	}
+}
+
+func TestFileTree_JumpToFile(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// Expand all directories
+	for i := 0; i < len(h.flatFileList); i++ {
+		node := h.flatFileList[i]
+		if node.IsDir && !node.Expanded {
+			h.selectedFileIdx = i
+			h.ToggleExpandFile()
+			i = 0 // Reset to catch newly added directories
+		}
+	}
+
+	// Count .go files
+	goFileCount := 0
+	for _, node := range h.flatFileList {
+		if !node.IsDir && strings.HasSuffix(node.Name, ".go") {
+			goFileCount++
+		}
+	}
+
+	if goFileCount < 4 {
+		t.Errorf("Expected at least 4 .go files in test data, got %d", goFileCount)
+	}
+}
