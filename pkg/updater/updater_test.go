@@ -263,7 +263,7 @@ func TestRelease_Fields(t *testing.T) {
 	// Test that Release struct can be properly instantiated
 	rel := Release{
 		TagName: "v0.9.0",
-		HTMLURL: "https://github.com/Dicklesworthstone/github.com/Dicklesworthstone/beads_viewer/releases/tag/v0.9.0",
+		HTMLURL: "https://github.com/Dicklesworthstone/beads_viewer/releases/tag/v0.9.0",
 	}
 
 	if rel.TagName != "v0.9.0" {
@@ -279,8 +279,8 @@ func TestRelease_Fields(t *testing.T) {
 // ============================================================================
 
 func TestCompareVersions_AgainstCurrentVersion(t *testing.T) {
-	// These tests ensure that the current app version is properly comparable
-	// Current version is v0.10.2 (from version.go)
+	// These tests ensure version comparison works correctly with a sample version
+	// Note: uses a fixed test version, not the actual app version from version.go
 	currentVersion := "v0.10.2"
 
 	tests := []struct {
