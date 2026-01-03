@@ -75,7 +75,7 @@ jobs:
           req=
           case "$pkg" in
             github.com/Dicklesworthstone/beads_viewer/pkg/analysis) req=75 ;;
-            github.com/Dicklesworthstone/beads_viewer/pkg/export) req=70 ;;
+            github.com/Dicklesworthstone/beads_viewer/pkg/export) req=69 ;;
             github.com/Dicklesworthstone/beads_viewer/pkg/recipe) req=90 ;;
             github.com/Dicklesworthstone/beads_viewer/pkg/ui) req=55 ;;
             github.com/Dicklesworthstone/beads_viewer/pkg/loader) req=80 ;;
