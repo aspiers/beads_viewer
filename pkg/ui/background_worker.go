@@ -38,6 +38,7 @@ type BackgroundWorker struct {
 	state    WorkerState
 	dirty    bool // True if a change came in while processing
 	snapshot *DataSnapshot
+	started  bool // True if Start() has been called
 
 	// Components
 	watcher *watcher.Watcher
@@ -90,7 +91,16 @@ func NewBackgroundWorker(cfg WorkerConfig) (*BackgroundWorker, error) {
 }
 
 // Start begins watching for file changes and processing in the background.
+// Start is idempotent - calling it multiple times has no effect.
 func (w *BackgroundWorker) Start() error {
+	w.mu.Lock()
+	if w.started {
+		w.mu.Unlock()
+		return nil // Already started
+	}
+	w.started = true
+	w.mu.Unlock()
+
 	if w.watcher != nil {
 		if err := w.watcher.Start(); err != nil {
 			return err
@@ -98,12 +108,16 @@ func (w *BackgroundWorker) Start() error {
 
 		// Start the processing loop
 		go w.processLoop()
+	} else {
+		// No watcher - close done channel immediately so Stop() doesn't block
+		close(w.done)
 	}
 
 	return nil
 }
 
 // Stop halts the background worker and cleans up resources.
+// Stop is idempotent - calling it multiple times has no effect.
 func (w *BackgroundWorker) Stop() {
 	w.mu.Lock()
 	if w.state == WorkerStopped {
@@ -111,6 +125,7 @@ func (w *BackgroundWorker) Stop() {
 		return
 	}
 	w.state = WorkerStopped
+	wasStarted := w.started
 	w.mu.Unlock()
 
 	w.cancel()
@@ -119,17 +134,24 @@ func (w *BackgroundWorker) Stop() {
 		w.watcher.Stop()
 	}
 
-	// Wait for processing loop to exit
-	select {
-	case <-w.done:
-	case <-time.After(2 * time.Second):
-		// Timeout waiting for graceful shutdown
+	// Only wait for done if Start() was called
+	if wasStarted {
+		select {
+		case <-w.done:
+		case <-time.After(2 * time.Second):
+			// Timeout waiting for graceful shutdown
+		}
 	}
 }
 
 // TriggerRefresh manually triggers a refresh of the data.
+// Has no effect if the worker is stopped or already processing.
 func (w *BackgroundWorker) TriggerRefresh() {
 	w.mu.Lock()
+	if w.state == WorkerStopped {
+		w.mu.Unlock()
+		return
+	}
 	if w.state == WorkerProcessing {
 		w.dirty = true
 		w.mu.Unlock()
