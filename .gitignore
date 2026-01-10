@@ -39,3 +39,6 @@ pkg/ui/.beads/
 # Large benchmark test data (generated)
 tests/testdata/benchmark/
 *.prof
+
+# E2E test logs
+test_results_e2e_*.log

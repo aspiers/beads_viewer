@@ -2,14 +2,14 @@ package analysis
 
 import (
 	"math/rand"
+	"runtime"
 	"sort"
+	"sync"
 	"time"
 
 	"gonum.org/v1/gonum/graph"
 	"gonum.org/v1/gonum/graph/network"
 	"gonum.org/v1/gonum/graph/simple"
-	"sync"
-	"runtime"
 )
 
 // brandesBuffers holds reusable data structures for Brandes' algorithm.
@@ -322,15 +322,17 @@ func singleSourceBetweenness(g *simple.DirectedGraph, source graph.Node, bc map[
 			}
 		}
 
-		if w != sourceID {
-			bc[w] += delta[w]
-		}
+		// Add dependency to betweenness (w != sourceID already checked above)
+		bc[w] += delta[w]
 	}
 }
 
 // RecommendSampleSize returns a recommended sample size based on graph characteristics.
 // The goal is to balance accuracy vs. speed.
+//
+// Note: edgeCount is accepted for future density-aware heuristics but currently unused.
 func RecommendSampleSize(nodeCount, edgeCount int) int {
+	_ = edgeCount // Reserved for future density-aware sampling heuristics
 	switch {
 	case nodeCount < 100:
 		// Small graph: use exact algorithm
