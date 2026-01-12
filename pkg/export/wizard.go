@@ -85,13 +85,6 @@ func newForm(groups ...*huh.Group) *huh.Form {
 	return form
 }
 
-// nopCloser wraps an io.Reader to implement io.ReadCloser with a no-op Close.
-type nopCloser struct {
-	io.Reader
-}
-
-func (nopCloser) Close() error { return nil }
-
 // newReadCloserFromReader wraps an io.Reader as an *os.File-compatible ReadCloser.
 // Note: This creates a temporary wrapper - the returned value is not actually an *os.File,
 // but can be used with huh's accessible mode which only needs io.Reader.
@@ -195,8 +188,10 @@ func (w *Wizard) Run() (*WizardResult, error) {
 				case err := <-errCh:
 					return nil, fmt.Errorf("wizard requires interactive input; stdin error: %w", err)
 				case <-time.After(100 * time.Millisecond):
-					// Timeout - stdin might be waiting for input that will come later
-					// This is not an error case, continue normally
+					// Timeout without receiving data or EOF.
+					// The goroutine is still running and will consume any stdin that arrives,
+					// which would race with wizard form input. Error out to be safe.
+					return nil, fmt.Errorf("wizard requires interactive input; stdin did not provide data within timeout")
 				}
 			}
 		}
