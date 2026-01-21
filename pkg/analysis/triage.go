@@ -1462,45 +1462,92 @@ func EnhanceRecommendationWithTriageReasons(rec *Recommendation, triageReasons T
 	rec.Reasons = triageReasons.All
 }
 
-// buildRecommendationsByTrack groups recommendations by execution track
+// buildRecommendationsByTrack groups recommendations by execution layer (topological depth).
+// This enables multi-agent parallelization: all items in the same layer can be worked concurrently.
+//
+// Layering algorithm (BFS-based topological sort):
+//   - Layer 0 ("track-A"): All currently actionable items (no open blockers)
+//   - Layer 1 ("track-B"): Items blocked only by layer-0 items
+//   - Layer N: Items blocked only by layer-(N-1) items
+//
+// This differs from the previous connected-components approach which created
+// one track per disconnected work stream (issue #68).
 func buildRecommendationsByTrack(recs []Recommendation, analyzer *Analyzer, unblocksMap map[string][]string) []TrackRecommendationGroup {
-	// reuse plan logic to get tracks
-	plan := analyzer.GetExecutionPlan()
+	// Compute blocker depth for all recommendations.
+	// Depth 0 = actionable now (no blockers), Depth N = blocked by depth-(N-1) items.
+	blockerDepths := make(map[string]int, len(recs))
+	recByID := make(map[string]*Recommendation, len(recs))
 
-	// map issue -> track
-	issueTrack := make(map[string]string)
-	trackReasons := make(map[string]string)
-
-	for _, t := range plan.Tracks {
-		trackReasons[t.TrackID] = t.Reason
-		for _, item := range t.Items {
-			issueTrack[item.ID] = t.TrackID
-		}
+	for i := range recs {
+		recByID[recs[i].ID] = &recs[i]
 	}
 
-	groups := make(map[string]*TrackRecommendationGroup)
+	// BFS-based depth computation.
+	// Items with no blockers are depth 0. Items blocked by depth-0 items are depth 1, etc.
+	var dfs func(id string, visited map[string]bool) int
+	dfs = func(id string, visited map[string]bool) int {
+		if depth, ok := blockerDepths[id]; ok {
+			return depth
+		}
+		if visited[id] {
+			return -1 // Cycle detected
+		}
+		visited[id] = true
 
-	for _, rec := range recs {
-		trackID, ok := issueTrack[rec.ID]
-		if !ok {
-			trackID = "ungrouped"
+		rec := recByID[id]
+		if rec == nil || len(rec.BlockedBy) == 0 {
+			visited[id] = false
+			blockerDepths[id] = 0
+			return 0
 		}
 
-		if _, exists := groups[trackID]; !exists {
-			reason := trackReasons[trackID]
-			if trackID == "ungrouped" {
-				reason = "Issues not in actionable plan"
+		maxBlockerDepth := 0
+		for _, blockerID := range rec.BlockedBy {
+			blockerDepth := dfs(blockerID, visited)
+			if blockerDepth == -1 {
+				visited[id] = false
+				blockerDepths[id] = -1
+				return -1
 			}
-			groups[trackID] = &TrackRecommendationGroup{
+			if blockerDepth+1 > maxBlockerDepth {
+				maxBlockerDepth = blockerDepth + 1
+			}
+		}
+
+		visited[id] = false
+		blockerDepths[id] = maxBlockerDepth
+		return maxBlockerDepth
+	}
+
+	// Compute depths for all recommendations
+	for _, rec := range recs {
+		visited := make(map[string]bool)
+		dfs(rec.ID, visited)
+	}
+
+	// Group recommendations by depth into tracks
+	groups := make(map[int]*TrackRecommendationGroup)
+
+	for _, rec := range recs {
+		depth := blockerDepths[rec.ID]
+		if depth < 0 {
+			depth = 999 // Put cyclic items in a special track
+		}
+
+		if _, exists := groups[depth]; !exists {
+			trackID := generateTrackID(depth + 1) // depth 0 -> track-A, depth 1 -> track-B
+			reason := layerReason(depth, len(recs))
+			groups[depth] = &TrackRecommendationGroup{
 				TrackID: trackID,
 				Reason:  reason,
 			}
 		}
-		group := groups[trackID]
+
+		group := groups[depth]
 		group.Recommendations = append(group.Recommendations, rec)
 		group.TotalUnblocks += len(unblocksMap[rec.ID])
 
-		// update top pick logic (highest score)
+		// Update top pick (highest score in this layer)
 		if group.TopPick == nil || rec.Score > group.TopPick.Score {
 			group.TopPick = &TopPick{
 				ID:       rec.ID,
@@ -1513,17 +1560,33 @@ func buildRecommendationsByTrack(recs []Recommendation, analyzer *Analyzer, unbl
 		}
 	}
 
-	// Convert map to slice and sort
-	var result []TrackRecommendationGroup
-	for _, g := range groups {
-		result = append(result, *g)
+	// Convert map to sorted slice (by depth/track order)
+	var depths []int
+	for d := range groups {
+		depths = append(depths, d)
+	}
+	sort.Ints(depths)
+
+	result := make([]TrackRecommendationGroup, 0, len(groups))
+	for _, d := range depths {
+		result = append(result, *groups[d])
 	}
 
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].TrackID < result[j].TrackID
-	})
-
 	return result
+}
+
+// layerReason returns a human-readable reason for a track's grouping.
+func layerReason(depth int, totalRecs int) string {
+	switch {
+	case depth == 0:
+		return "Actionable now - can work in parallel"
+	case depth == 1:
+		return "Becomes actionable after layer 0 completes"
+	case depth >= 999:
+		return "Cyclic dependencies detected"
+	default:
+		return fmt.Sprintf("Becomes actionable after layer %d completes", depth-1)
+	}
 }
 
 // buildRecommendationsByLabel groups recommendations by label
