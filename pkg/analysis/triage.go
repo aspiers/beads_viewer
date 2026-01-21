@@ -334,6 +334,17 @@ func ComputeTriageWithOptionsAndTime(issues []model.Issue, opts TriageOptions, n
 	// Build analyzer and stats
 	analyzer := NewAnalyzer(issues)
 
+	// bv-perf: Check if there are any open issues before computing Phase 2
+	// Phase 2 metrics (PageRank, Betweenness) are only used for scoring open issues.
+	// If all issues are closed, we can skip Phase 2 entirely.
+	hasOpenIssues := false
+	for _, issue := range issues {
+		if !isClosedLikeStatus(issue.Status) {
+			hasOpenIssues = true
+			break
+		}
+	}
+
 	// Use fast config for triage-only analysis (bv-t1js optimization)
 	var stats *GraphStats
 	if opts.UseFastConfig {
@@ -343,8 +354,8 @@ func ComputeTriageWithOptionsAndTime(issues []model.Issue, opts TriageOptions, n
 	}
 
 	// Triage requires advanced metrics (PageRank, etc.) for scoring.
-	// If requested, wait for Phase 2 to complete.
-	if opts.WaitForPhase2 {
+	// If requested, wait for Phase 2 to complete - but only if there are open issues.
+	if opts.WaitForPhase2 && hasOpenIssues {
 		stats.WaitForPhase2()
 	}
 
