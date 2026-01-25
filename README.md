@@ -76,6 +76,30 @@ irm "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/insta
 
 ---
 
+## 🤖 Agent Quickstart (Robot Mode)
+
+⚠️ **Never run bare `bv` in an agent context** — it launches the interactive TUI. Always use `--robot-*`.
+
+```bash
+# 1) Start with triage (single-call mega-command)
+bv --robot-triage
+
+# 2) Minimal mode: just the top pick + claim command
+bv --robot-next
+
+# 3) Token-optimized output (TOON)
+bv --robot-triage --format toon
+export BV_OUTPUT_FORMAT=toon
+
+# 4) Full robot help
+bv --robot-help
+```
+
+**Output conventions**
+- stdout = JSON/TOON data only
+- stderr = diagnostics
+- exit 0 = success
+
 ## 💡 TL;DR
 
 `bv` is a high-performance **Terminal User Interface (TUI)** for browsing and managing tasks in projects that use the **Beads** issue tracking system. 
