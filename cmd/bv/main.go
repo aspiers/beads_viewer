@@ -6752,7 +6752,7 @@ func NewRobotEnvelope(dataHash string) RobotEnvelope {
 		GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
 		DataHash:     dataHash,
 		OutputFormat: robotOutputFormat,
-		Version:      "1.0.0", // TODO: use actual version from pkg/version
+		Version:      version.Version,
 	}
 }
 
