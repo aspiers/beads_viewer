@@ -73,6 +73,9 @@ func main() {
 	attentionLimit := flag.Int("attention-limit", 5, "Limit number of labels in --robot-label-attention output")
 	robotAlerts := flag.Bool("robot-alerts", false, "Output alerts (drift + proactive) as JSON for AI agents")
 	robotMetrics := flag.Bool("robot-metrics", false, "Output performance metrics (timing, cache, memory) as JSON")
+	// JSON Schema for robot outputs (bd-2kxo)
+	robotSchema := flag.Bool("robot-schema", false, "Output JSON Schema definitions for all robot commands")
+	schemaCommand := flag.String("schema-command", "", "Output schema for specific command only (e.g., robot-triage)")
 	// Smart suggestions (bv-180)
 	robotSuggest := flag.Bool("robot-suggest", false, "Output smart suggestions (duplicates, dependencies, labels, cycles) as JSON")
 	suggestType := flag.String("suggest-type", "", "Filter suggestions by type: duplicate, dependency, label, cycle")
@@ -256,6 +259,7 @@ func main() {
 		*robotLabelAttention ||
 		*robotAlerts ||
 		*robotMetrics ||
+		*robotSchema ||
 		*robotSuggest ||
 		*robotGraph ||
 		*robotSearch ||
@@ -574,6 +578,18 @@ func main() {
 		fmt.Println("      Lists all available recipes as JSON.")
 		fmt.Println("      Output: {recipes: [{name, description, source}]}")
 		fmt.Println("      Sources: 'builtin', 'user' (~/.config/bv/recipes.yaml), 'project' (.bv/recipes.yaml)")
+		fmt.Println("")
+		fmt.Println("  --robot-schema [--schema-command=NAME]")
+		fmt.Println("      Outputs JSON Schema definitions for all robot command outputs.")
+		fmt.Println("      Useful for validation, tool integration, and understanding output structure.")
+		fmt.Println("      Key fields:")
+		fmt.Println("        - schema_version: Version of the schema format")
+		fmt.Println("        - envelope: Common fields present in all robot outputs")
+		fmt.Println("        - commands: Map of command name -> JSON Schema definition")
+		fmt.Println("      Options:")
+		fmt.Println("        --schema-command=NAME: Output schema for specific command only")
+		fmt.Println("      Example: bv --robot-schema")
+		fmt.Println("      Example: bv --robot-schema --schema-command=robot-triage")
 		fmt.Println("")
 		fmt.Println("  --robot-label-health")
 		fmt.Println("      Outputs label health metrics as JSON (velocity, freshness, flow, criticality).")
@@ -955,6 +971,42 @@ func main() {
 		encoder := newRobotEncoder(os.Stdout)
 		if err := encoder.Encode(output); err != nil {
 			fmt.Fprintf(os.Stderr, "Error encoding recipes: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	// Handle --robot-schema (bd-2kxo)
+	if *robotSchema {
+		schemas := generateRobotSchemas()
+
+		// Filter to specific command if requested
+		if *schemaCommand != "" {
+			if schema, ok := schemas.Commands[*schemaCommand]; ok {
+				singleOutput := map[string]interface{}{
+					"schema_version": schemas.SchemaVersion,
+					"generated_at":   schemas.GeneratedAt,
+					"command":        *schemaCommand,
+					"schema":         schema,
+				}
+				encoder := newRobotEncoder(os.Stdout)
+				if err := encoder.Encode(singleOutput); err != nil {
+					fmt.Fprintf(os.Stderr, "Error encoding schema: %v\n", err)
+					os.Exit(1)
+				}
+				os.Exit(0)
+			}
+			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", *schemaCommand)
+			fmt.Fprintln(os.Stderr, "Available commands:")
+			for cmd := range schemas.Commands {
+				fmt.Fprintf(os.Stderr, "  %s\n", cmd)
+			}
+			os.Exit(1)
+		}
+
+		encoder := newRobotEncoder(os.Stdout)
+		if err := encoder.Encode(schemas); err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding schemas: %v\n", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -6784,4 +6836,271 @@ func estimateTokens(s string) int {
 	}
 	// Coarse heuristic; good enough for comparing JSON vs TOON output size.
 	return (len(trimmed) + 3) / 4
+}
+
+// RobotSchemas holds JSON Schema definitions for all robot commands
+type RobotSchemas struct {
+	SchemaVersion string                            `json:"schema_version"`
+	GeneratedAt   string                            `json:"generated_at"`
+	Envelope      map[string]interface{}            `json:"envelope"`
+	Commands      map[string]map[string]interface{} `json:"commands"`
+}
+
+// generateRobotSchemas creates JSON Schema definitions for robot command outputs
+func generateRobotSchemas() RobotSchemas {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Common envelope schema (present in all robot outputs)
+	envelope := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"generated_at": map[string]interface{}{
+				"type":        "string",
+				"format":      "date-time",
+				"description": "ISO 8601 timestamp when output was generated",
+			},
+			"data_hash": map[string]interface{}{
+				"type":        "string",
+				"description": "Fingerprint of source beads.jsonl for cache validation",
+			},
+		},
+		"required": []string{"generated_at", "data_hash"},
+	}
+
+	commands := map[string]map[string]interface{}{
+		"robot-triage": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Triage Output",
+			"description": "Unified triage recommendations with quick picks, blockers, and project health",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"triage": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"meta": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"version":      map[string]interface{}{"type": "string"},
+								"generated_at": map[string]interface{}{"type": "string"},
+								"phase2_ready": map[string]interface{}{"type": "boolean"},
+								"issue_count":  map[string]interface{}{"type": "integer"},
+							},
+						},
+						"quick_ref": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"open_count":       map[string]interface{}{"type": "integer"},
+								"actionable_count": map[string]interface{}{"type": "integer"},
+								"blocked_count":    map[string]interface{}{"type": "integer"},
+								"in_progress_count": map[string]interface{}{"type": "integer"},
+								"top_picks": map[string]interface{}{
+									"type":  "array",
+									"items": map[string]interface{}{"$ref": "#/$defs/recommendation"},
+								},
+							},
+						},
+						"recommendations": map[string]interface{}{
+							"type":  "array",
+							"items": map[string]interface{}{"$ref": "#/$defs/recommendation"},
+						},
+						"quick_wins":        map[string]interface{}{"type": "array"},
+						"blockers_to_clear": map[string]interface{}{"type": "array"},
+						"project_health":    map[string]interface{}{"type": "object"},
+						"commands":          map[string]interface{}{"type": "object"},
+					},
+				},
+				"usage_hints": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			},
+			"$defs": map[string]interface{}{
+				"recommendation": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"id":       map[string]interface{}{"type": "string"},
+						"title":    map[string]interface{}{"type": "string"},
+						"type":     map[string]interface{}{"type": "string"},
+						"status":   map[string]interface{}{"type": "string"},
+						"priority": map[string]interface{}{"type": "integer"},
+						"labels":   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+						"score":    map[string]interface{}{"type": "number"},
+						"reasons":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+						"unblocks": map[string]interface{}{"type": "integer"},
+					},
+					"required": []string{"id", "title", "score"},
+				},
+			},
+		},
+		"robot-next": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Next Output",
+			"description": "Single top pick recommendation with claim command",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":  map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":     map[string]interface{}{"type": "string"},
+				"id":            map[string]interface{}{"type": "string"},
+				"title":         map[string]interface{}{"type": "string"},
+				"score":         map[string]interface{}{"type": "number"},
+				"reasons":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"unblocks":      map[string]interface{}{"type": "integer"},
+				"claim_command": map[string]interface{}{"type": "string"},
+				"show_command":  map[string]interface{}{"type": "string"},
+			},
+			"required": []string{"generated_at", "data_hash", "id", "title", "score"},
+		},
+		"robot-plan": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Plan Output",
+			"description": "Dependency-respecting execution plan with parallel tracks",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"plan": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"phases": map[string]interface{}{
+							"type": "array",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"phase":  map[string]interface{}{"type": "integer"},
+									"issues": map[string]interface{}{"type": "array"},
+								},
+							},
+						},
+						"summary": map[string]interface{}{"type": "object"},
+					},
+				},
+				"status":      map[string]interface{}{"type": "object"},
+				"usage_hints": map[string]interface{}{"type": "array"},
+			},
+		},
+		"robot-insights": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Insights Output",
+			"description": "Full graph analysis metrics including PageRank, betweenness, HITS, cycles",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":      map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":         map[string]interface{}{"type": "string"},
+				"Stats":             map[string]interface{}{"type": "object"},
+				"Cycles":            map[string]interface{}{"type": "array"},
+				"Keystones":         map[string]interface{}{"type": "array"},
+				"Bottlenecks":       map[string]interface{}{"type": "array"},
+				"Influencers":       map[string]interface{}{"type": "array"},
+				"Hubs":              map[string]interface{}{"type": "array"},
+				"Authorities":       map[string]interface{}{"type": "array"},
+				"Orphans":           map[string]interface{}{"type": "array"},
+				"Cores":             map[string]interface{}{"type": "object"},
+				"Articulation":      map[string]interface{}{"type": "array"},
+				"Slack":             map[string]interface{}{"type": "object"},
+				"Velocity":          map[string]interface{}{"type": "object"},
+				"status":            map[string]interface{}{"type": "object"},
+				"advanced_insights": map[string]interface{}{"type": "object"},
+				"usage_hints":       map[string]interface{}{"type": "array"},
+			},
+		},
+		"robot-priority": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Priority Output",
+			"description": "Priority misalignment detection with recommendations",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":    map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":       map[string]interface{}{"type": "string"},
+				"recommendations": map[string]interface{}{"type": "array"},
+				"status":          map[string]interface{}{"type": "object"},
+				"usage_hints":     map[string]interface{}{"type": "array"},
+			},
+		},
+		"robot-graph": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Graph Output",
+			"description": "Dependency graph in JSON/DOT/Mermaid format",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"format":       map[string]interface{}{"type": "string", "enum": []string{"json", "dot", "mermaid"}},
+				"nodes":        map[string]interface{}{"type": "array"},
+				"edges":        map[string]interface{}{"type": "array"},
+				"stats":        map[string]interface{}{"type": "object"},
+			},
+		},
+		"robot-diff": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Diff Output",
+			"description": "Changes since a historical point (commit, branch, date)",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"since":        map[string]interface{}{"type": "string"},
+				"since_commit": map[string]interface{}{"type": "string"},
+				"new":          map[string]interface{}{"type": "array"},
+				"closed":       map[string]interface{}{"type": "array"},
+				"modified":     map[string]interface{}{"type": "array"},
+				"cycles":       map[string]interface{}{"type": "object"},
+			},
+		},
+		"robot-alerts": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Alerts Output",
+			"description": "Stale issues, blocking cascades, priority mismatches",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"alerts":       map[string]interface{}{"type": "array"},
+				"summary":      map[string]interface{}{"type": "object"},
+			},
+		},
+		"robot-suggest": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Suggest Output",
+			"description": "Smart suggestions for duplicates, dependencies, labels, cycle breaks",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"suggestions":  map[string]interface{}{"type": "array"},
+				"counts":       map[string]interface{}{"type": "object"},
+			},
+		},
+		"robot-burndown": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Burndown Output",
+			"description": "Sprint burndown data with scope changes and at-risk items",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"sprint_id":    map[string]interface{}{"type": "string"},
+				"burndown":     map[string]interface{}{"type": "array"},
+				"scope_changes": map[string]interface{}{"type": "array"},
+				"at_risk":      map[string]interface{}{"type": "array"},
+			},
+		},
+		"robot-forecast": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Forecast Output",
+			"description": "ETA predictions with dependency-aware scheduling",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"forecasts":    map[string]interface{}{"type": "array"},
+				"methodology":  map[string]interface{}{"type": "object"},
+			},
+		},
+	}
+
+	return RobotSchemas{
+		SchemaVersion: "1.0.0",
+		GeneratedAt:   now,
+		Envelope:      envelope,
+		Commands:      commands,
+	}
 }
