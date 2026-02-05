@@ -1190,6 +1190,14 @@ func main() {
 		}
 	}
 
+	// Apply recipe filtering early for robot modes (bv-93)
+	// This ensures --recipe filters are applied before robot modes exit.
+	// dataHash uses pre-filtered issues for stability.
+	if activeRecipe != nil && (*robotTriage || *robotNext || *robotTriageByTrack || *robotTriageByLabel || *robotPriority || *robotInsights || *robotPlan) {
+		issues = applyRecipeFilters(issues, activeRecipe)
+		issues = applyRecipeSort(issues, activeRecipe)
+	}
+
 	// Handle semantic search CLI (bv-9gf.3)
 	if *robotSearch && *semanticQuery == "" {
 		fmt.Fprintln(os.Stderr, "Error: --robot-search requires --search \"query\"")
