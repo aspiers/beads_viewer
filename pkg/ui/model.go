@@ -5867,7 +5867,7 @@ func (m *Model) renderFooter() string {
 	workspaceSection := ""
 	if m.workspaceMode && m.workspaceSummary != "" {
 		workspaceStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("#45B7D1")).
+			Background(ThemeBg("#45B7D1")).
 			Foreground(ColorBg).
 			Bold(true).
 			Padding(0, 1)
