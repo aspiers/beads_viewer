@@ -1,6 +1,9 @@
 package version
 
-import "runtime/debug"
+import (
+	"runtime/debug"
+	"strings"
+)
 
 // version is set at build time by GoReleaser or manual ldflags:
 //
@@ -31,7 +34,8 @@ func init() {
 }
 
 // versionFromBuildInfo extracts the module version stamped by the Go toolchain
-// when the binary is built via "go install". Returns empty string if unavailable.
+// when the binary is built via "go install ...@vX.Y.Z". Returns empty string
+// for local development builds (which produce "(devel)" or pseudo-versions).
 func versionFromBuildInfo() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -39,6 +43,12 @@ func versionFromBuildInfo() string {
 	}
 	v := info.Main.Version
 	if v == "" || v == "(devel)" {
+		return ""
+	}
+	// Filter out pseudo-versions (e.g., v0.14.5-0.20260212...-abcdef123456)
+	// and dirty builds. These come from local "go build" or "go run", not
+	// from "go install ...@vX.Y.Z" which produces clean semver tags.
+	if strings.Contains(v, "-0.") || strings.HasSuffix(v, "+dirty") {
 		return ""
 	}
 	if v[0] != 'v' {
