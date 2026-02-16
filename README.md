@@ -265,11 +265,11 @@ Use bv instead of parsing beads.jsonl—it computes PageRank, critical paths, cy
 **Manual Control:**
 
 ```bash
-bd agents --show              # Display current blurb content
-bd agents --check             # Check if blurb is present in agent file
-bd agents --add               # Add blurb to agent file
-bd agents --remove            # Remove blurb from agent file
-bd agents --clear-preference  # Reset the "don't ask again" preference
+bv --agents-check             # Check if blurb is present in agent file
+bv --agents-add               # Add blurb to agent file (creates file if needed)
+bv --agents-remove            # Remove blurb from agent file
+bv --agents-update            # Update blurb to latest version
+bv --agents-dry-run           # Show what would happen without executing
 ```
 
 **Version Tracking:**
@@ -3404,7 +3404,7 @@ Reliability is key. `bv` doesn't assume a perfect environment; it actively handl
 The loader (`pkg/loader/loader.go`) doesn't just blindly open `.beads/beads.jsonl`. It employs a priority-based discovery algorithm:
 1.  **Canonical:** Checks for `issues.jsonl` (preferred by beads upstream).
 2.  **Legacy:** Fallback to `beads.jsonl` for backward compatibility.
-3.  **Base:** Checks `beads.base.jsonl` (used by `bd` in daemon mode).
+3.  **Base:** Checks `beads.base.jsonl` (used by `br` in daemon mode).
 4.  **Validation:** It skips temporary files like `*.backup` or `deletions.jsonl` to prevent displaying corrupted state.
 
 ### 2. Robust Parsing
@@ -3511,10 +3511,10 @@ No — it just means `bv` is using polling instead of filesystem events for live
 These indicators mean the background worker hasn’t produced a fresh snapshot recently (or needed to self-heal). Try `Ctrl+R`/`F5`, check filesystem permissions/health, or temporarily disable background mode (`BV_BACKGROUND_MODE=0`) to fall back to synchronous reload.
 
 **Q: I see "Cycles Detected" in the dashboard. What now?**
-A: A cycle (e.g., A → B → A) means your project logic is broken; no task can be finished first. Use the Insights Dashboard (`i`) to find the specific cycle members, then use `bd` to remove one of the dependency links (e.g., `bd unblock A --from B`).
+A: A cycle (e.g., A → B → A) means your project logic is broken; no task can be finished first. Use the Insights Dashboard (`i`) to find the specific cycle members, then use `br` to remove one of the dependency links (e.g., `br unblock A --from B`).
 
 **Q: Does this work with Jira/GitHub?**
-A: `bv` is data-agnostic. The Beads data schema supports an `external_ref` field. If you populate your `.beads/beads.jsonl` file with issues from external trackers (e.g., using a custom script or sync tool), `bv` will render them alongside your local tasks. Future versions of the `bd` CLI may support native syncing, but `bv` is ready for that data today.
+A: `bv` is data-agnostic. The Beads data schema supports an `external_ref` field. If you populate your `.beads/beads.jsonl` file with issues from external trackers (e.g., using a custom script or sync tool), `bv` will render them alongside your local tasks. Future versions of the `br` CLI may support native syncing, but `bv` is ready for that data today.
 
 **Q: What's the difference between "bead" and "issue"?**
 A: They're the same thing! In the Beads ecosystem, the unit of work is called a "bead" (hence the name). However, `bv` uses "issue" in many places since that's the more familiar term for most developers. The CLI flags use both interchangeably: `--robot-file-beads`, `--pages-include-closed` (issues), etc. Think of "bead" as the Beads-specific term and "issue" as the general concept.
@@ -3576,7 +3576,7 @@ Or add to your flake inputs:
 
 ## 🚀 Usage Guide
 
-Navigate to any project initialized with `bd init` and run:
+Navigate to any project initialized with `br init` and run:
 
 ```bash
 bv
